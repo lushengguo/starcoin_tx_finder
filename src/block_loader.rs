@@ -11,11 +11,10 @@ pub fn decode_payload(hex_payload: &str) -> Option<serde_json::Value> {
 
     match payload {
         TransactionPayload::ScriptFunction(sf) => {
-            let module = sf.module.to_string();
-            let function = sf.function.to_string();
-            let ty_args = sf.ty_args.iter().map(|ty| ty.to_string()).collect::<Vec<_>>();
-            let args = sf.args.iter().map(|arg| {
-                // 你可以更具体地解析 arg 类型，这里先按 u128 假设
+            let module = sf.module().to_string();
+            let function = sf.function().to_string();
+            let ty_args = sf.ty_args().iter().map(|ty| ty.to_string()).collect::<Vec<_>>();
+            let args = sf.args().iter().map(|arg| {
                 if arg.len() == 16 {
                     let mut buf = [0u8; 16];
                     buf.copy_from_slice(arg);
