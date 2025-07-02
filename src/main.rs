@@ -1,7 +1,7 @@
 mod block_loader;
 
 use block_loader::{
-    enhance_transaction_data, format_events_output, get_starcoin_block_ws,
+    format_events_part, format_raw_data_part, get_decoded_payload, get_starcoin_block_ws,
     get_transaction_by_hash_ws, get_transaction_events_ws, get_transaction_info_ws,
 };
 
@@ -11,35 +11,31 @@ use crate::block_loader::get_transactions_from_block;
 async fn main() {
     let tx_hash = "0xe29d7508fe37d756d83e672be53843d10d084f9c69fca1b7e9a34ea8eb96f918";
 
-    if let Some(tx_response) = get_transaction_by_hash_ws(tx_hash).await {
-        println!("=== TRANSACTION DATA ===");
-        let enhanced_tx = enhance_transaction_data(&tx_response);
-        println!("{}", serde_json::to_string_pretty(&enhanced_tx).unwrap());
-        println!();
-    }
+    let tx_response = get_transaction_by_hash_ws(tx_hash).await;
+    let tx_info_response = get_transaction_info_ws(tx_hash).await;
+    let events_response = get_transaction_events_ws(tx_hash).await;
 
-    if let Some(tx_info_response) = get_transaction_info_ws(tx_hash).await {
-        println!("=== TRANSACTION INFO ===");
-        println!(
-            "{}",
-            serde_json::to_string_pretty(&tx_info_response).unwrap()
-        );
-        println!();
-    }
+    let mut json: serde_json::Value = serde_json::json!({
+        "events": serde_json::Value::Null,
+        "raw_data": serde_json::Value::Null,
+        "decoded_payload": serde_json::Value::Null
+    });
 
-    if let Some(events_response) = get_transaction_events_ws(tx_hash).await {
-        println!("=== TRANSACTION EVENTS (Raw) ===");
-        println!(
-            "{}",
-            serde_json::to_string_pretty(&events_response).unwrap()
-        );
-        println!();
+    if let (Some(tx), Some(info), Some(events)) = (tx_response, tx_info_response, events_response) {
+        println!("=== COMPLETE TRANSACTION FORMAT ===");
+        if let Some(complete_format) = format_raw_data_part(&tx, &info, &events) {
+            json["raw_data"] = serde_json::to_value(&complete_format).unwrap();
+        }
 
-        if let Some(formatted_events) = format_events_output(&events_response) {
-            println!("=== FORMATTED EVENTS ===");
-            for event in formatted_events {
-                println!("{}", serde_json::to_string_pretty(&event).unwrap());
-            }
+        let decoded_payload = get_decoded_payload(&tx);
+        if let Some(payload) = decoded_payload {
+            json["decoded_payload"] = serde_json::to_value(&payload).unwrap();
+        }
+
+        if let Some(formatted_events) = format_events_part(&events) {
+            json["events"] = serde_json::to_value(&formatted_events).unwrap();
         }
     }
+
+    println!("{}", serde_json::to_string_pretty(&json).unwrap());
 }
