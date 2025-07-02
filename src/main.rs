@@ -1,11 +1,9 @@
 mod block_loader;
 
 use block_loader::{
-    format_events_part, format_raw_data_part, get_decoded_payload, get_starcoin_block_ws,
-    get_transaction_by_hash_ws, get_transaction_events_ws, get_transaction_info_ws,
+    format_events_part, format_raw_data_part, get_decoded_payload, get_transaction_by_hash_ws,
+    get_transaction_events_ws, get_transaction_info_ws,
 };
-
-use crate::block_loader::get_transactions_from_block;
 
 #[tokio::main]
 async fn main() {

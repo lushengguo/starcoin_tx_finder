@@ -44,103 +44,6 @@ fn decode_script_function(bytes: &[u8]) -> Option<serde_json::Value> {
     None
 }
 
-fn decode_type_tag(bytes: &[u8], mut pos: usize) -> Option<(String, usize)> {
-    if pos >= bytes.len() {
-        return None;
-    }
-
-    match bytes[pos] {
-        0x07 => {
-            pos += 1;
-
-            if pos + 32 > bytes.len() {
-                return None;
-            }
-            let address = hex::encode(&bytes[pos..pos + 32]);
-            pos += 32;
-
-            if pos >= bytes.len() {
-                return None;
-            }
-            let module_len = bytes[pos] as usize;
-            pos += 1;
-
-            if pos + module_len > bytes.len() {
-                return None;
-            }
-            let module = String::from_utf8(bytes[pos..pos + module_len].to_vec()).ok()?;
-            pos += module_len;
-
-            if pos >= bytes.len() {
-                return None;
-            }
-            let struct_len = bytes[pos] as usize;
-            pos += 1;
-
-            if pos + struct_len > bytes.len() {
-                return None;
-            }
-            let struct_name = String::from_utf8(bytes[pos..pos + struct_len].to_vec()).ok()?;
-            pos += struct_len;
-
-            if pos < bytes.len() {
-                pos += 1;
-            }
-
-            Some((format!("0x{}::{}::{}", address, module, struct_name), pos))
-        }
-        _ => Some(("unknown".to_string(), pos + 1)),
-    }
-}
-
-fn decode_argument(bytes: &[u8], mut pos: usize) -> Option<(serde_json::Value, usize)> {
-    if pos >= bytes.len() {
-        return None;
-    }
-
-    if pos + 16 <= bytes.len() {
-        let mut value_bytes = [0u8; 16];
-        value_bytes.copy_from_slice(&bytes[pos..pos + 16]);
-        let value = u128::from_le_bytes(value_bytes);
-        Some((json!(value), pos + 16))
-    } else {
-        Some((json!(0), pos + 1))
-    }
-}
-
-pub async fn get_starcoin_block_ws(
-    block_number: u64,
-    full_details: bool,
-) -> Option<serde_json::Value> {
-    let ws_url = "ws://main.seed.starcoin.org:9870";
-    let url = Url::parse(ws_url).ok()?;
-
-    let block_option = if full_details {
-        json!({ "Full": true })
-    } else {
-        json!({ "Header": true })
-    };
-
-    let request_payload = json!({
-        "jsonrpc": "2.0",
-        "id": 1,
-        "method": "chain.get_block_by_number",
-        "params": [block_number, block_option]
-    });
-
-    let (mut ws_stream, _) = connect_async(url).await.ok()?;
-    let msg = tokio_tungstenite::tungstenite::Message::Text(request_payload.to_string());
-    ws_stream.send(msg).await.ok()?;
-
-    while let Some(Ok(msg)) = ws_stream.next().await {
-        if let tokio_tungstenite::tungstenite::Message::Text(text) = msg {
-            return serde_json::from_str(&text).ok();
-        }
-    }
-
-    None
-}
-
 pub async fn get_transaction_events_ws(transaction_hash: &str) -> Option<serde_json::Value> {
     let ws_url = "ws://main.seed.starcoin.org:9870";
     let url = Url::parse(ws_url).ok()?;
@@ -210,25 +113,6 @@ pub async fn get_transaction_info_ws(transaction_hash: &str) -> Option<serde_jso
         }
     }
 
-    None
-}
-
-pub fn get_transactions_from_block(block_response: &serde_json::Value) -> Option<Vec<String>> {
-    if let Some(result) = block_response.get("result") {
-        if let Some(body) = result.get("body") {
-            if let Some(transactions) = body.get("Full") {
-                if let Some(tx_array) = transactions.as_array() {
-                    return Some(
-                        tx_array
-                            .iter()
-                            .filter_map(|tx| tx.get("transaction_hash"))
-                            .filter_map(|hash| hash.as_str().map(String::from))
-                            .collect(),
-                    );
-                }
-            }
-        }
-    }
     None
 }
 
@@ -347,7 +231,7 @@ pub fn format_raw_data_part(
     if let Some(events_array) = events_result.as_array() {
         let mut formatted_events = Vec::new();
         for event in events_array {
-            let mut formatted_event = json!({
+            let formatted_event = json!({
                 "_id": "",
                 "block_hash": event.get("block_hash").unwrap_or(&json!("")),
                 "block_number": event.get("block_number").unwrap_or(&json!("")),
