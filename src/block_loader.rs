@@ -44,8 +44,10 @@ fn decode_script_function(bytes: &[u8]) -> Option<serde_json::Value> {
     None
 }
 
-pub async fn get_transaction_events_ws(transaction_hash: &str) -> Option<serde_json::Value> {
-    let ws_url = "ws://main.seed.starcoin.org:9870";
+pub async fn get_transaction_events_ws(
+    ws_url: &str,
+    transaction_hash: &str,
+) -> Option<serde_json::Value> {
     let url = Url::parse(ws_url).ok()?;
 
     let request_payload = json!({
@@ -68,8 +70,10 @@ pub async fn get_transaction_events_ws(transaction_hash: &str) -> Option<serde_j
     None
 }
 
-pub async fn get_transaction_by_hash_ws(transaction_hash: &str) -> Option<serde_json::Value> {
-    let ws_url = "ws://main.seed.starcoin.org:9870";
+pub async fn get_transaction_by_hash_ws(
+    ws_url: &str,
+    transaction_hash: &str,
+) -> Option<serde_json::Value> {
     let url = Url::parse(ws_url).ok()?;
 
     let request_payload = json!({
@@ -92,8 +96,10 @@ pub async fn get_transaction_by_hash_ws(transaction_hash: &str) -> Option<serde_
     None
 }
 
-pub async fn get_transaction_info_ws(transaction_hash: &str) -> Option<serde_json::Value> {
-    let ws_url = "ws://main.seed.starcoin.org:9870";
+pub async fn get_transaction_info_ws(
+    ws_url: &str,
+    transaction_hash: &str,
+) -> Option<serde_json::Value> {
     let url = Url::parse(ws_url).ok()?;
 
     let request_payload = json!({
@@ -188,18 +194,13 @@ pub fn format_events_part(events_response: &serde_json::Value) -> Option<Vec<ser
 }
 
 pub fn get_decoded_payload(tx_response: &serde_json::Value) -> Option<serde_json::Value> {
-    if let Some(result) = tx_response.get("result") {
-        if let Some(user_tx) = result.get("user_transaction") {
-            if let Some(raw_txn) = user_tx.get("raw_txn") {
-                if let Some(payload) = raw_txn.get("payload") {
-                    if let Some(payload_str) = payload.as_str() {
-                        return decode_payload(payload_str);
-                    }
-                }
-            }
-        }
-    }
-    None
+    tx_response
+        .get("result")
+        .and_then(|r| r.get("user_transaction"))
+        .and_then(|u| u.get("raw_txn"))
+        .and_then(|t| t.get("payload"))
+        .and_then(|p| p.as_str())
+        .and_then(decode_payload)
 }
 
 pub fn format_raw_data_part(
@@ -250,28 +251,26 @@ pub fn format_raw_data_part(
         complete_tx["events"] = json!(formatted_events);
     }
 
-    if let Some(user_tx) = complete_tx.get_mut("user_transaction") {
-        if let Some(raw_txn) = user_tx.get_mut("raw_txn") {
-            if let Some(payload) = raw_txn.get("payload") {
-                if let Some(payload_str) = payload.as_str() {
-                    if let Some(decoded) = decode_payload(payload_str) {
-                        if let Some(raw_txn_obj) = raw_txn.as_object_mut() {
-                            raw_txn_obj.insert(
-                                "decoded_payload".to_string(),
-                                serde_json::Value::String(
-                                    serde_json::to_string(&decoded).unwrap_or_default(),
-                                ),
-                            );
-                            raw_txn_obj.insert(
-                                "transaction_hash".to_string(),
-                                serde_json::Value::String("".to_string()),
-                            );
-                        }
-                    }
-                }
-            }
-        }
-    }
+    let payload_str = complete_tx
+        .get_mut("user_transaction")?
+        .get_mut("raw_txn")?
+        .get("payload")?
+        .as_str()?;
+
+    let decoded = decode_payload(payload_str)?;
+    let raw_txn_obj = complete_tx
+        .get_mut("user_transaction")?
+        .get_mut("raw_txn")?
+        .as_object_mut()?;
+
+    raw_txn_obj.insert(
+        "decoded_payload".to_string(),
+        serde_json::Value::String(serde_json::to_string(&decoded).unwrap_or_default()),
+    );
+    raw_txn_obj.insert(
+        "transaction_hash".to_string(),
+        serde_json::Value::String(String::new()),
+    );
 
     complete_tx["timestamp"] = json!(1750125083478u64);
 
