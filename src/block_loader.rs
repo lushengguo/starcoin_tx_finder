@@ -2,46 +2,40 @@ use futures_util::{SinkExt, StreamExt};
 use serde_json::json;
 use tokio_tungstenite::connect_async;
 use url::Url;
+use starcoin_types::transaction::TransactionPayload;
+use bcs::from_bytes;
 
-pub fn decode_payload(payload_hex: &str) -> Option<serde_json::Value> {
-    if payload_hex.len() < 2 || !payload_hex.starts_with("0x") {
-        return None;
-    }
+pub fn decode_payload(hex_payload: &str) -> Option<serde_json::Value> {
+    let payload_bytes = hex::decode(hex_payload.strip_prefix("0x")?).ok()?;
+    let payload: TransactionPayload = from_bytes(&payload_bytes).ok()?;
 
-    let payload_bytes = hex::decode(&payload_hex[2..]).ok()?;
+    match payload {
+        TransactionPayload::ScriptFunction(sf) => {
+            let module = sf.module.to_string();
+            let function = sf.function.to_string();
+            let ty_args = sf.ty_args.iter().map(|ty| ty.to_string()).collect::<Vec<_>>();
+            let args = sf.args.iter().map(|arg| {
+                // 你可以更具体地解析 arg 类型，这里先按 u128 假设
+                if arg.len() == 16 {
+                    let mut buf = [0u8; 16];
+                    buf.copy_from_slice(arg);
+                    json!(u128::from_le_bytes(buf))
+                } else {
+                    json!(format!("0x{}", hex::encode(arg)))
+                }
+            }).collect::<Vec<_>>();
 
-    if payload_bytes.is_empty() {
-        return None;
-    }
-
-    match payload_bytes[0] {
-        0x02 => decode_script_function(&payload_bytes[1..]),
+            Some(json!({
+                "ScriptFunction": {
+                    "module": module,
+                    "function": function,
+                    "ty_args": ty_args,
+                    "args": args
+                }
+            }))
+        },
         _ => None,
     }
-}
-
-fn decode_script_function(bytes: &[u8]) -> Option<serde_json::Value> {
-    let payload_hex = hex::encode(bytes);
-
-    if payload_hex.contains("50726963654f7261636c655363726970747306757064617465") {
-        if bytes.len() >= 16 {
-            let value_start = bytes.len() - 16;
-            let mut value_bytes = [0u8; 16];
-            value_bytes.copy_from_slice(&bytes[value_start..]);
-            let price_value = u128::from_le_bytes(value_bytes);
-
-            return Some(json!({
-                "ScriptFunction": {
-                    "module": "0x00000000000000000000000000000001::PriceOracleScripts",
-                    "function": "update",
-                    "ty_args": ["0x82e35b34096f32c42061717c06e44a59::BTC_USD::BTC_USD"],
-                    "args": [price_value]
-                }
-            }));
-        }
-    }
-
-    None
 }
 
 pub async fn get_transaction_events_ws(
