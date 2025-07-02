@@ -21,6 +21,27 @@ async fn main() {
     let tx_hash = &args[1];
 
     let tx_response = get_transaction_by_hash_ws(tx_hash).await;
+    if let Some(tx) = &tx_response {
+        if let Some(result) = tx.get("result") {
+            if let Some(block_number_str) = result.get("block_number") {
+                if let Some(block_number_str) = block_number_str.as_str() {
+                    if let Ok(block_number) = block_number_str.parse::<u64>() {
+                        if block_number >= 20000 {
+                            println!(
+                                "this transaction is not found in the first 20000 blocks, it was found in block number: {}",
+                                block_number
+                            );
+                            return;
+                        }
+                    }
+                }
+            }
+        }
+    } else {
+        println!("not found in first 20000 blocks");
+        return;
+    }
+
     let tx_info_response = get_transaction_info_ws(tx_hash).await;
     let events_response = get_transaction_events_ws(tx_hash).await;
 
