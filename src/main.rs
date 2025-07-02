@@ -1,8 +1,8 @@
 mod block_loader;
 
 use block_loader::{
-    format_events_output, get_starcoin_block_ws, get_transaction_by_hash_ws,
-    get_transaction_events_ws, get_transaction_info_ws,
+    enhance_transaction_data, format_events_output, get_starcoin_block_ws,
+    get_transaction_by_hash_ws, get_transaction_events_ws, get_transaction_info_ws,
 };
 
 use crate::block_loader::get_transactions_from_block;
@@ -13,7 +13,8 @@ async fn main() {
 
     if let Some(tx_response) = get_transaction_by_hash_ws(tx_hash).await {
         println!("=== TRANSACTION DATA ===");
-        println!("{}", serde_json::to_string_pretty(&tx_response).unwrap());
+        let enhanced_tx = enhance_transaction_data(&tx_response);
+        println!("{}", serde_json::to_string_pretty(&enhanced_tx).unwrap());
         println!();
     }
 

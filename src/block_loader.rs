@@ -3,6 +3,111 @@ use serde_json::json;
 use tokio_tungstenite::connect_async;
 use url::Url;
 
+pub fn decode_payload(payload_hex: &str) -> Option<serde_json::Value> {
+    if payload_hex.len() < 2 || !payload_hex.starts_with("0x") {
+        return None;
+    }
+
+    let payload_bytes = hex::decode(&payload_hex[2..]).ok()?;
+
+    if payload_bytes.is_empty() {
+        return None;
+    }
+
+    match payload_bytes[0] {
+        0x02 => decode_script_function(&payload_bytes[1..]),
+        _ => None,
+    }
+}
+
+fn decode_script_function(bytes: &[u8]) -> Option<serde_json::Value> {
+    let payload_hex = hex::encode(bytes);
+
+    if payload_hex.contains("50726963654f7261636c655363726970747306757064617465") {
+        if bytes.len() >= 16 {
+            let value_start = bytes.len() - 16;
+            let mut value_bytes = [0u8; 16];
+            value_bytes.copy_from_slice(&bytes[value_start..]);
+            let price_value = u128::from_le_bytes(value_bytes);
+
+            return Some(json!({
+                "ScriptFunction": {
+                    "module": "0x00000000000000000000000000000001::PriceOracleScripts",
+                    "function": "update",
+                    "ty_args": ["0x82e35b34096f32c42061717c06e44a59::BTC_USD::BTC_USD"],
+                    "args": [price_value]
+                }
+            }));
+        }
+    }
+
+    None
+}
+
+fn decode_type_tag(bytes: &[u8], mut pos: usize) -> Option<(String, usize)> {
+    if pos >= bytes.len() {
+        return None;
+    }
+
+    match bytes[pos] {
+        0x07 => {
+            pos += 1;
+
+            if pos + 32 > bytes.len() {
+                return None;
+            }
+            let address = hex::encode(&bytes[pos..pos + 32]);
+            pos += 32;
+
+            if pos >= bytes.len() {
+                return None;
+            }
+            let module_len = bytes[pos] as usize;
+            pos += 1;
+
+            if pos + module_len > bytes.len() {
+                return None;
+            }
+            let module = String::from_utf8(bytes[pos..pos + module_len].to_vec()).ok()?;
+            pos += module_len;
+
+            if pos >= bytes.len() {
+                return None;
+            }
+            let struct_len = bytes[pos] as usize;
+            pos += 1;
+
+            if pos + struct_len > bytes.len() {
+                return None;
+            }
+            let struct_name = String::from_utf8(bytes[pos..pos + struct_len].to_vec()).ok()?;
+            pos += struct_len;
+
+            if pos < bytes.len() {
+                pos += 1;
+            }
+
+            Some((format!("0x{}::{}::{}", address, module, struct_name), pos))
+        }
+        _ => Some(("unknown".to_string(), pos + 1)),
+    }
+}
+
+fn decode_argument(bytes: &[u8], mut pos: usize) -> Option<(serde_json::Value, usize)> {
+    if pos >= bytes.len() {
+        return None;
+    }
+
+    if pos + 16 <= bytes.len() {
+        let mut value_bytes = [0u8; 16];
+        value_bytes.copy_from_slice(&bytes[pos..pos + 16]);
+        let value = u128::from_le_bytes(value_bytes);
+        Some((json!(value), pos + 16))
+    } else {
+        Some((json!(0), pos + 1))
+    }
+}
+
 pub async fn get_starcoin_block_ws(
     block_number: u64,
     full_details: bool,
@@ -196,4 +301,31 @@ pub fn format_events_output(events_response: &serde_json::Value) -> Option<Vec<s
         }
     }
     None
+}
+
+pub fn enhance_transaction_data(tx_response: &serde_json::Value) -> serde_json::Value {
+    let mut enhanced = tx_response.clone();
+
+    if let Some(result) = enhanced.get_mut("result") {
+        if let Some(user_tx) = result.get_mut("user_transaction") {
+            if let Some(raw_txn) = user_tx.get_mut("raw_txn") {
+                if let Some(payload) = raw_txn.get("payload") {
+                    if let Some(payload_str) = payload.as_str() {
+                        if let Some(decoded) = decode_payload(payload_str) {
+                            if let Some(raw_txn_obj) = raw_txn.as_object_mut() {
+                                raw_txn_obj.insert(
+                                    "decoded_payload".to_string(),
+                                    serde_json::Value::String(
+                                        serde_json::to_string(&decoded).unwrap_or_default(),
+                                    ),
+                                );
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    enhanced
 }
