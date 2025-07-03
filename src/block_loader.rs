@@ -90,6 +90,41 @@ fn thousands_separator(n: u128) -> String {
     result.chars().rev().collect()
 }
 
+pub async fn get_timestamp_from_block_header(ws_url: &str, block_hash: &str) -> Option<i64> {
+    let url = Url::parse(ws_url).ok()?;
+    let (mut ws_stream, _) = connect_async(url).await.ok()?;
+
+    let request = json!({
+        "jsonrpc": "2.0",
+        "id": 2,
+        "method": "chain.get_block_by_hash",
+        "params": [block_hash]
+    });
+
+    ws_stream
+        .send(tokio_tungstenite::tungstenite::Message::Text(
+            request.to_string(),
+        ))
+        .await
+        .ok()?;
+
+    while let Some(Ok(tokio_tungstenite::tungstenite::Message::Text(response))) =
+        ws_stream.next().await
+    {
+        let json: serde_json::Value = serde_json::from_str(&response).ok()?;
+        
+        if let Some(result) = json.get("result") {
+            if let Some(header) = result.get("header") {
+                if let Some(timestamp) = header.get("timestamp") {
+                    return timestamp.as_str().and_then(|s| s.parse::<i64>().ok());
+                }
+            }
+        }
+    }
+
+    None
+}
+
 pub async fn get_transaction_events_ws(
     ws_url: &str,
     transaction_hash: &str,

@@ -2,11 +2,12 @@ use crate::block_loader;
 use serde_json::json;
 
 use block_loader::{
-    decode_payload, get_decoded_payload, get_transaction_by_hash_ws, get_transaction_events_ws,
-    get_transaction_info_ws, parse_event_data,
+    decode_payload, get_decoded_payload, get_timestamp_from_block_header,
+    get_transaction_by_hash_ws, get_transaction_events_ws, get_transaction_info_ws,
+    parse_event_data,
 };
 
-pub fn format_raw_data_part(
+pub async fn format_raw_data_part(
     tx_response: &serde_json::Value,
     tx_info_response: &serde_json::Value,
     events_response: &serde_json::Value,
@@ -137,7 +138,15 @@ pub fn format_raw_data_part(
         }
     };
 
-    complete_tx["timestamp"] = json!(1750125083478u64);
+    // get_timestamp_from_block_header is async, so we must await it and assign the result
+    let timestamp = get_timestamp_from_block_header(
+        "ws://main.seed.starcoin.org:9870",
+        tx_result
+            .get("block_hash")
+            .and_then(|h| h.as_str())
+            .unwrap_or("")
+    ).await.unwrap_or(0);
+    complete_tx["timestamp"] = json!(timestamp);
 
     Some(complete_tx)
 }
@@ -246,7 +255,7 @@ pub async fn get_standard_format_output(tx_hash: &str) -> Option<(serde_json::Va
         println!("info:{}", info);
         println!("events:{}", events);
 
-        if let Some(complete_format) = format_raw_data_part(&tx, &info, &events) {
+        if let Some(complete_format) = format_raw_data_part(&tx, &info, &events).await {
             json["raw_data"] = serde_json::to_value(&complete_format).unwrap();
         }
 
@@ -446,91 +455,126 @@ mod test {
 
     #[tokio::test]
     async fn test_get_standard_format_output_2() {
-        let tx_hash = "0x5c41cc59034cbf84b4bdb957d788c6526ed134639adbfff7a198c68efc8fde8f";
+        let tx_hash = "0x3e85d64cc798c2c73c3ae23f40ad6ecbe1abd6cb78eae6319ae6980991676189";
         let events = r#"
             [
                 {
-                    "Data": {
-                        "amount": "318513600000000000",
-                        "token_code": {
-                            "address": "0x00000000000000000000000000000001",
-                            "module": "STC",
-                            "name": "STC"
-                        }
-                    },
-                    "Module": "Token",
-                    "Name": "MintEvent",
-                    "Key": {
-                        "address": "0x00000000000000000000000000000001",
-                        "salt": "14"
-                    },
-                    "Seq": "0"
+                "Data": "0x23f4d890508a3800000000000000000000000000000000000000000000000001035354430353544300",
+                "Key": {
+                    "address": "0xd4b5c70450d95ac1bf92e8e8a9b9d298",
+                    "salt": "0"
+                },
+                "Module": "Account",
+                "Name": "WithdrawEvent",
+                "Seq": "3"
                 },
                 {
-                    "Data": {
-                        "token_code": {
-                            "address": "0x00000000000000000000000000000001",
-                            "module": "STC",
-                            "name": "STC"
-                        }
-                    },
-                    "Module": "Account",
-                    "Name": "AcceptTokenEvent",
-                    "Key": {
-                        "address": "0x00000000000000000000000000000001",
-                        "salt": "2"
-                    },
-                    "Seq": "0"
+                "Data": "0x23f4d890508a3800000000000000000000000000000000000000000000000001035354430353544300",
+                "Key": {
+                    "address": "0xc3299e6c57d775a6fdc333f36b8be396",
+                    "salt": "1"
                 },
-                {
-                    "Data": {
-                        "amount": "15925680000000000",
-                        "metadata": [],
-                        "token_code": {
-                            "address": "0x00000000000000000000000000000001",
-                            "module": "STC",
-                            "name": "STC"
-                        }
-                    },
-                    "Module": "Account",
-                    "Name": "DepositEvent",
-                    "Key": {
-                        "address": "0x0000000000000000000000000000a55c18",
-                        "salt": "1"
-                    },
-                    "Seq": "0"
-                },
-                {
-                    "Data": "0x00c010487cb352020000000000",
-                    "Module": "Treasury",
-                    "Name": "WithdrawEvent",
-                    "Key": {
-                        "address": "0x00000000000000000000000000000001",
-                        "salt": "16"
-                    },
-                    "Seq": "0"
-                },
-                {
-                    "Data": {
-                        "token_code": {
-                            "address": "0x00000000000000000000000000000001",
-                            "module": "STC",
-                            "name": "STC"
-                        }
-                    },
-                    "Module": "Account",
-                    "Name": "AcceptTokenEvent",
-                    "Key": {
-                        "address": "0x0000000000000000000000000000a55c18",
-                        "salt": "2"
-                    },
-                    "Seq": "0"
+                "Module": "Account",
+                "Name": "DepositEvent",
+                "Seq": "9"
                 }
             ]
             "#;
 
-        let raw_data = r#"{}"#;
-        let decoded_payload = r#"{}"#;
+        let raw_data = r#"
+            {
+                "_id": "",
+                "block_hash": "0x42dc623f0c5908e1864249dde9aa43d9f1af146b2dce120571b901e683db3977",
+                "block_number": "10044",
+                "event_root_hash": "0x2c75c709b3ad08972979e8a09be98524649c8b1c645855c5e85de6e44baa66b7",
+                "events": [
+                    {
+                        "_id": "",
+                        "block_hash": "0x42dc623f0c5908e1864249dde9aa43d9f1af146b2dce120571b901e683db3977",
+                        "block_number": "10044",
+                        "data": "0x23f4d890508a3800000000000000000000000000000000000000000000000001035354430353544300",
+                        "decode_event_data": "",
+                        "event_index": 0,
+                        "event_key": "0x0000000000000000d4b5c70450d95ac1bf92e8e8a9b9d298",
+                        "event_seq_number": "3",
+                        "transaction_global_index": 0,
+                        "transaction_hash": "0x3e85d64cc798c2c73c3ae23f40ad6ecbe1abd6cb78eae6319ae6980991676189",
+                        "transaction_index": 1,
+                        "type_tag": "0x00000000000000000000000000000001::Account::WithdrawEvent"
+                    },
+                    {
+                        "_id": "",
+                        "block_hash": "0x42dc623f0c5908e1864249dde9aa43d9f1af146b2dce120571b901e683db3977",
+                        "block_number": "10044",
+                        "data": "0x23f4d890508a3800000000000000000000000000000000000000000000000001035354430353544300",
+                        "decode_event_data": "",
+                        "event_index": 1,
+                        "event_key": "0x0100000000000000c3299e6c57d775a6fdc333f36b8be396",
+                        "event_seq_number": "9",
+                        "transaction_global_index": 0,
+                        "transaction_hash": "0x3e85d64cc798c2c73c3ae23f40ad6ecbe1abd6cb78eae6319ae6980991676189",
+                        "transaction_index": 1,
+                        "type_tag": "0x00000000000000000000000000000001::Account::DepositEvent"
+                    }
+                ],
+                "gas_used": "124191",
+                "state_root_hash": "0x5648c0e963b793df141326ca293de7b8400551086e6f6b2ba64627545755e894",
+                "status": "Executed",
+                "timestamp": 1621366200816,
+                "transaction_global_index": 10185,
+                "transaction_hash": "0x3e85d64cc798c2c73c3ae23f40ad6ecbe1abd6cb78eae6319ae6980991676189",
+                "transaction_index": 1,
+                "transaction_type": "ScriptFunction",
+                "user_transaction": {
+                    "authenticator": {
+                    "Ed25519": {
+                        "public_key": "0xea1821295e2ee6d19f05465ae5109e5695b879c7f9cf1405a4e0508fefb76e69",
+                        "signature": "0x23229976628db2cfefdbd9306098f289864d5810aa0770ba87220a67f28eaa6eb225cca53c63f16af63558ac494ee4569f631c6c7ab1d5571845fe149c49250f"
+                    }
+                    },
+                    "raw_txn": {
+                    "chain_id": 1,
+                    "decoded_payload": "",
+                    "expiration_timestamp_secs": "1621409397",
+                    "gas_token_code": "0x1::STC::STC",
+                    "gas_unit_price": "1",
+                    "max_gas_amount": "10000000",
+                    "payload": "0x02000000000000000000000000000000010f5472616e73666572536372697074730c706565725f746f5f706565720107000000000000000000000000000000010353544303535443000310c3299e6c57d775a6fdc333f36b8be39601001023f4d890508a38000000000000000000",
+                    "sender": "0xd4b5c70450d95ac1bf92e8e8a9b9d298",
+                    "sequence_number": "3",
+                    "transaction_hash": ""
+                    },
+                    "transaction_hash": "0x3e85d64cc798c2c73c3ae23f40ad6ecbe1abd6cb78eae6319ae6980991676189"
+                }
+            }
+        "#;
+
+        let decoded_payload = r#"
+            {
+                "ScriptFunction": {
+                    "func": {
+                    "address": "0x00000000000000000000000000000001",
+                    "module": "TransferScripts",
+                    "functionName": "peer_to_peer"
+                    },
+                    "ty_args": [
+                    {
+                        "Struct": {
+                        "module": "STC",
+                        "name": "STC",
+                        "type_params": [],
+                        "address": "0x00000000000000000000000000000001"
+                        }
+                    }
+                    ],
+                    "args": [
+                    "address: 0xc3299e6c57d775a6fdc333f36b8be396",
+                    "vector<u8>: []",
+                    "u128: 15,914,677,327,950,883"
+                    ]
+                }
+            }
+        "#;
 
         let json = serde_json::json!({
             "events" : serde_json::from_str::<serde_json::Value>(events).unwrap(),
