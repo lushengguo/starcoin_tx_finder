@@ -71,64 +71,71 @@ pub fn format_raw_data_part(
         None => return None,
     };
 
-    // Now perform the mutable borrow
     if let Some(raw_txn_obj) = complete_tx
         .get_mut("user_transaction")
         .and_then(|ut| ut.get_mut("raw_txn"))
         .and_then(|rt| rt.as_object_mut())
     {
-        let decoded = decode_payload(payload_str)?;
-        // Build trimmed_decoded with raw values for args and ty_args
-        let trimmed_decoded = decoded
-            .get("ScriptFunction")
-            .map(|sf| {
-                // Get original args as numbers if possible
-                let args = sf
-                    .get("args")
-                    .map(convert_args_to_standard_schema_in_raw_data)
-                    .unwrap_or_default();
-                // Get ty_args as original type strings if possible
-                let ty_args = sf
-                    .get("ty_args")
-                    .map(convert_ty_args_to_standard_schema_in_raw_data)
-                    .unwrap_or_default();
-                let func = sf.get("func");
-                if let Some(func_obj) = func.and_then(|f| f.as_object()) {
-                    let function = func_obj.get("functionName").cloned().unwrap_or_default();
-                    let module = if let (Some(addr), Some(module)) =
-                        (func_obj.get("address"), func_obj.get("module"))
-                    {
-                        serde_json::Value::String(format!(
-                            "{}::{}",
-                            addr.as_str().unwrap_or(""),
-                            module.as_str().unwrap_or("")
-                        ))
-                    } else {
-                        serde_json::Value::String(String::new())
-                    };
-                    serde_json::json!({
-                        "ScriptFunction": {
-                            "args": args,
-                            "function": function,
-                            "module": module,
-                            "ty_args": ty_args
+        match decode_payload(payload_str) {
+            Some(decoded) => {
+                let trimmed_decoded = decoded
+                    .get("ScriptFunction")
+                    .map(|sf| {
+                        let args = sf
+                            .get("args")
+                            .map(convert_args_to_standard_schema_in_raw_data)
+                            .unwrap_or_default();
+                        let ty_args = sf
+                            .get("ty_args")
+                            .map(convert_ty_args_to_standard_schema_in_raw_data)
+                            .unwrap_or_default();
+                        let func = sf.get("func");
+                        if let Some(func_obj) = func.and_then(|f| f.as_object()) {
+                            let function =
+                                func_obj.get("functionName").cloned().unwrap_or_default();
+                            let module = if let (Some(addr), Some(module)) =
+                                (func_obj.get("address"), func_obj.get("module"))
+                            {
+                                serde_json::Value::String(format!(
+                                    "{}::{}",
+                                    addr.as_str().unwrap_or(""),
+                                    module.as_str().unwrap_or("")
+                                ))
+                            } else {
+                                serde_json::Value::String(String::new())
+                            };
+                            serde_json::json!({
+                                "ScriptFunction": {
+                                    "args": args,
+                                    "function": function,
+                                    "module": module,
+                                    "ty_args": ty_args
+                                }
+                            })
+                        } else {
+                            serde_json::json!({})
                         }
                     })
-                } else {
-                    serde_json::json!({})
-                }
-            })
-            .unwrap_or(serde_json::json!({}));
-        raw_txn_obj.insert(
-            "decoded_payload".to_string(),
-            serde_json::Value::String(serde_json::to_string(&trimmed_decoded).unwrap()),
-        );
+                    .unwrap_or(serde_json::json!({}));
 
-        raw_txn_obj.insert(
-            "transaction_hash".to_string(),
-            serde_json::Value::String(String::new()),
-        );
-    }
+                raw_txn_obj.insert(
+                    "decoded_payload".to_string(),
+                    serde_json::Value::String(serde_json::to_string(&trimmed_decoded).unwrap()),
+                );
+
+                raw_txn_obj.insert(
+                    "transaction_hash".to_string(),
+                    serde_json::Value::String(String::new()),
+                );
+            }
+            None => {
+                raw_txn_obj.insert(
+                    "decoded_payload".to_string(),
+                    serde_json::Value::String("decode failed".to_string()),
+                );
+            }
+        }
+    };
 
     complete_tx["timestamp"] = json!(1750125083478u64);
 
@@ -332,7 +339,7 @@ mod test {
     }
 
     #[tokio::test]
-    async fn test_get_standard_format_output() {
+    async fn test_get_standard_format_output_1() {
         let tx_hash = "0xe29d7508fe37d756d83e672be53843d10d084f9c69fca1b7e9a34ea8eb96f918";
 
         let events = r#"
@@ -428,6 +435,102 @@ mod test {
                 }
             }
         "#;
+
+        let json = serde_json::json!({
+            "events" : serde_json::from_str::<serde_json::Value>(events).unwrap(),
+            "raw_data" : serde_json::from_str::<serde_json::Value>(raw_data).unwrap(),
+            "decoded_payload" : serde_json::from_str::<serde_json::Value>(decoded_payload).unwrap()
+        });
+        assert_standard_format_eq_to(&tx_hash, &json).await;
+    }
+
+    #[tokio::test]
+    async fn test_get_standard_format_output_2() {
+        let tx_hash = "0x5c41cc59034cbf84b4bdb957d788c6526ed134639adbfff7a198c68efc8fde8f";
+        let events = r#"
+            [
+                {
+                    "Data": {
+                        "amount": "318513600000000000",
+                        "token_code": {
+                            "address": "0x00000000000000000000000000000001",
+                            "module": "STC",
+                            "name": "STC"
+                        }
+                    },
+                    "Module": "Token",
+                    "Name": "MintEvent",
+                    "Key": {
+                        "address": "0x00000000000000000000000000000001",
+                        "salt": "14"
+                    },
+                    "Seq": "0"
+                },
+                {
+                    "Data": {
+                        "token_code": {
+                            "address": "0x00000000000000000000000000000001",
+                            "module": "STC",
+                            "name": "STC"
+                        }
+                    },
+                    "Module": "Account",
+                    "Name": "AcceptTokenEvent",
+                    "Key": {
+                        "address": "0x00000000000000000000000000000001",
+                        "salt": "2"
+                    },
+                    "Seq": "0"
+                },
+                {
+                    "Data": {
+                        "amount": "15925680000000000",
+                        "metadata": [],
+                        "token_code": {
+                            "address": "0x00000000000000000000000000000001",
+                            "module": "STC",
+                            "name": "STC"
+                        }
+                    },
+                    "Module": "Account",
+                    "Name": "DepositEvent",
+                    "Key": {
+                        "address": "0x0000000000000000000000000000a55c18",
+                        "salt": "1"
+                    },
+                    "Seq": "0"
+                },
+                {
+                    "Data": "0x00c010487cb352020000000000",
+                    "Module": "Treasury",
+                    "Name": "WithdrawEvent",
+                    "Key": {
+                        "address": "0x00000000000000000000000000000001",
+                        "salt": "16"
+                    },
+                    "Seq": "0"
+                },
+                {
+                    "Data": {
+                        "token_code": {
+                            "address": "0x00000000000000000000000000000001",
+                            "module": "STC",
+                            "name": "STC"
+                        }
+                    },
+                    "Module": "Account",
+                    "Name": "AcceptTokenEvent",
+                    "Key": {
+                        "address": "0x0000000000000000000000000000a55c18",
+                        "salt": "2"
+                    },
+                    "Seq": "0"
+                }
+            ]
+            "#;
+
+        let raw_data = r#"{}"#;
+        let decoded_payload = r#"{}"#;
 
         let json = serde_json::json!({
             "events" : serde_json::from_str::<serde_json::Value>(events).unwrap(),
