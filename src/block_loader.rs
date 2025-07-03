@@ -6,7 +6,8 @@ use starcoin_types::transaction::TransactionPayload;
 use tokio_tungstenite::connect_async;
 use url::Url;
 
-fn decode_arg(arg: &[u8]) -> serde_json::Value {
+fn decode_arg(arg: &[u8], type_tags: &Vec<String>) -> serde_json::Value {
+    println!("type args: {:?}", type_tags);
     if arg.len() == 16 {
         let mut buf = [0u8; 16];
         buf.copy_from_slice(arg);
@@ -18,23 +19,9 @@ fn decode_arg(arg: &[u8]) -> serde_json::Value {
     }
 }
 
-pub fn decode_payload_for_raw_data(_hex_payload: &str) -> Option<serde_json::Value> {
-    // leave it to blank, focus on the standalone decoded payload
-    // cause I found that in
-    // 0x3e85d64cc798c2c73c3ae23f40ad6ecbe1abd6cb78eae6319ae6980991676189
-    // 0x5c41cc59034cbf84b4bdb957d788c6526ed134639adbfff7a198c68efc8fde8f
-    // the decoded payload is empty
-    Some(serde_json::Value::Null)
-}
-
 pub async fn decode_payload_for_standalone_decoded_payload(
     hex_payload: &str,
 ) -> Option<serde_json::Value> {
-    let function_signature = resolve_function(MAINNET_WS_URL, hex_payload).await;
-    if let Some(function_signature) = function_signature {
-        println!("function_signature: {:?}", function_signature);
-    }
-
     let payload_bytes = hex::decode(hex_payload.strip_prefix("0x")?).ok()?;
     let payload: TransactionPayload = from_bytes(&payload_bytes).ok()?;
 
@@ -42,6 +29,32 @@ pub async fn decode_payload_for_standalone_decoded_payload(
         TransactionPayload::ScriptFunction(sf) => {
             let module = sf.module().to_string();
             let function = sf.function().to_string();
+            let (address, module_name) = if let Some(idx) = module.find("::") {
+                (module[..idx].to_string(), module[idx + 2..].to_string())
+            } else {
+                (module.clone(), String::new())
+            };
+
+            let param = module + "::" + &function;
+            let function_signature = resolve_function(MAINNET_WS_URL, &param).await;
+
+            let mut type_tags: Vec<String> = Vec::new();
+            if let Some(function_signature) = function_signature {
+                type_tags = function_signature
+                    .get("result")
+                    .and_then(|result| result.get("args"))
+                    .and_then(|args| args.as_array())
+                    .map(|args_array| {
+                        args_array
+                            .iter()
+                            .filter_map(|arg| arg.get("type_tag"))
+                            .filter_map(|type_tag| type_tag.as_str())
+                            .map(|type_tag_str| type_tag_str.to_string())
+                            .collect()
+                    })
+                    .unwrap_or_default();
+            }
+
             let ty_args = sf
                 .ty_args()
                 .iter()
@@ -70,15 +83,8 @@ pub async fn decode_payload_for_standalone_decoded_payload(
             let args = sf
                 .args()
                 .iter()
-                .map(|arg| decode_arg(arg))
+                .map(|arg| decode_arg(arg, &type_tags))
                 .collect::<Vec<_>>();
-
-            // Extract address from module string (format: 0x...::ModuleName)
-            let (address, module_name) = if let Some(idx) = module.find("::") {
-                (module[..idx].to_string(), module[idx + 2..].to_string())
-            } else {
-                (module.clone(), String::new())
-            };
 
             Some(json!({
                 "ScriptFunction": {
@@ -181,7 +187,7 @@ pub async fn get_transaction_by_hash_ws(
         "jsonrpc": "2.0",
         "id": 3,
         "method": "chain.get_transaction",
-        "params": [transaction_hash]
+        "params": [transaction_hash, {"decode": true}]
     });
 
     let (mut ws_stream, _) = connect_async(url).await.ok()?;
