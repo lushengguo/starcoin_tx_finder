@@ -1,9 +1,211 @@
 use crate::block_loader;
+use serde_json::json;
 
 use block_loader::{
-    format_events_part, format_raw_data_part, get_decoded_payload, get_transaction_by_hash_ws,
-    get_transaction_events_ws, get_transaction_info_ws,
+    decode_payload, get_decoded_payload, get_transaction_by_hash_ws, get_transaction_events_ws,
+    get_transaction_info_ws, parse_event_data,
 };
+
+pub fn format_raw_data_part(
+    tx_response: &serde_json::Value,
+    tx_info_response: &serde_json::Value,
+    events_response: &serde_json::Value,
+) -> Option<serde_json::Value> {
+    let tx_result = tx_response.get("result")?;
+    let info_result = tx_info_response.get("result")?;
+    let events_result = events_response.get("result")?;
+
+    let mut complete_tx = json!({
+        "_id": "",
+        "block_hash": tx_result.get("block_hash").unwrap_or(&json!("")),
+        "block_number": tx_result.get("block_number").unwrap_or(&json!("")),
+        "event_root_hash": info_result.get("event_root_hash").unwrap_or(&json!("")),
+        "events": [],
+        "gas_used": info_result.get("gas_used").unwrap_or(&json!("")),
+        "state_root_hash": info_result.get("state_root_hash").unwrap_or(&json!("")),
+        "status": info_result.get("status").unwrap_or(&json!("")),
+        "timestamp": 0,
+        "transaction_global_index": tx_result.get("transaction_global_index")
+            .or_else(|| info_result.get("transaction_global_index"))
+            .and_then(|v| v.as_u64().or_else(|| v.as_str().and_then(|s| s.parse::<u64>().ok())))
+            .map(|v| json!(v))
+            .unwrap_or(json!(0)),
+        "transaction_hash": tx_result.get("transaction_hash").unwrap_or(&json!("")),
+        "transaction_index": tx_result.get("transaction_index").unwrap_or(&json!(0)),
+        "transaction_type": "ScriptFunction",
+        "user_transaction": tx_result.get("user_transaction").unwrap_or(&json!({}))
+    });
+
+    if let Some(events_array) = events_result.as_array() {
+        let mut formatted_events = Vec::new();
+        for event in events_array {
+            let formatted_event = json!({
+                "_id": "",
+                "block_hash": event.get("block_hash").unwrap_or(&json!("")),
+                "block_number": event.get("block_number").unwrap_or(&json!("")),
+                "data": event.get("data").unwrap_or(&json!("")),
+                "decode_event_data": "",
+                "event_index": event.get("event_index").unwrap_or(&json!(0)),
+                "event_key": event.get("event_key").unwrap_or(&json!("")),
+                "event_seq_number": event.get("event_seq_number").unwrap_or(&json!("")),
+                "transaction_global_index": 0, // in demo data this field was alaways 0, I don't know why
+                "transaction_hash": event.get("transaction_hash").unwrap_or(&json!("")),
+                "transaction_index": event.get("transaction_index").unwrap_or(&json!(0)),
+                "type_tag": event.get("type_tag").unwrap_or(&json!(""))
+            });
+            formatted_events.push(formatted_event);
+        }
+        complete_tx["events"] = json!(formatted_events);
+    }
+
+    // Extract user_transaction and payload_str before any mutable borrow
+    let user_transaction = complete_tx.get("user_transaction").cloned();
+    let payload_str = user_transaction
+        .as_ref()
+        .and_then(|ut| ut.get("raw_txn"))
+        .and_then(|rt| rt.get("payload"))
+        .and_then(|p| p.as_str());
+
+    let payload_str = match payload_str {
+        Some(s) => s,
+        None => return None,
+    };
+
+    // Now perform the mutable borrow
+    if let Some(raw_txn_obj) = complete_tx
+        .get_mut("user_transaction")
+        .and_then(|ut| ut.get_mut("raw_txn"))
+        .and_then(|rt| rt.as_object_mut())
+    {
+        let decoded = decode_payload(payload_str)?;
+        // Build trimmed_decoded with raw values for args and ty_args
+        let trimmed_decoded = decoded
+            .get("ScriptFunction")
+            .map(|sf| {
+                // Get original args as numbers if possible
+                let args = sf
+                    .get("args")
+                    .map(convert_args_to_standard_schema_in_raw_data)
+                    .unwrap_or_default();
+                // Get ty_args as original type strings if possible
+                let ty_args = sf
+                    .get("ty_args")
+                    .map(convert_ty_args_to_standard_schema_in_raw_data)
+                    .unwrap_or_default();
+                let func = sf.get("func");
+                if let Some(func_obj) = func.and_then(|f| f.as_object()) {
+                    let function = func_obj.get("functionName").cloned().unwrap_or_default();
+                    let module = if let (Some(addr), Some(module)) =
+                        (func_obj.get("address"), func_obj.get("module"))
+                    {
+                        serde_json::Value::String(format!(
+                            "{}::{}",
+                            addr.as_str().unwrap_or(""),
+                            module.as_str().unwrap_or("")
+                        ))
+                    } else {
+                        serde_json::Value::String(String::new())
+                    };
+                    serde_json::json!({
+                        "ScriptFunction": {
+                            "args": args,
+                            "function": function,
+                            "module": module,
+                            "ty_args": ty_args
+                        }
+                    })
+                } else {
+                    serde_json::json!({})
+                }
+            })
+            .unwrap_or(serde_json::json!({}));
+        raw_txn_obj.insert(
+            "decoded_payload".to_string(),
+            serde_json::Value::String(serde_json::to_string(&trimmed_decoded).unwrap()),
+        );
+
+        raw_txn_obj.insert(
+            "transaction_hash".to_string(),
+            serde_json::Value::String(String::new()),
+        );
+    }
+
+    complete_tx["timestamp"] = json!(1750125083478u64);
+
+    Some(complete_tx)
+}
+
+// Helper to parse args as numbers if possible
+fn convert_args_to_standard_schema_in_raw_data(args: &serde_json::Value) -> Vec<serde_json::Value> {
+    args.as_array()
+        .map(|vec| {
+            vec.iter()
+                .map(|v| {
+                    if let Some(s) = v.as_str() {
+                        if s.starts_with("u128: ") {
+                            let num_str = s[6..].replace(",", "");
+                            num_str
+                                .parse::<u128>()
+                                .map(serde_json::Value::from)
+                                .unwrap_or(v.clone())
+                        } else {
+                            v.clone()
+                        }
+                    } else {
+                        v.clone()
+                    }
+                })
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+// Helper to parse ty_args as type strings
+fn convert_ty_args_to_standard_schema_in_raw_data(
+    ty_args: &serde_json::Value,
+) -> Vec<serde_json::Value> {
+    ty_args
+        .as_array()
+        .map(|vec| {
+            vec.iter()
+                .map(|v| {
+                    if let Some(struct_obj) = v.get("Struct") {
+                        let address = struct_obj
+                            .get("address")
+                            .and_then(|a| a.as_str())
+                            .unwrap_or("");
+                        let module = struct_obj
+                            .get("module")
+                            .and_then(|m| m.as_str())
+                            .unwrap_or("");
+                        let name = struct_obj
+                            .get("name")
+                            .and_then(|n| n.as_str())
+                            .unwrap_or("");
+                        serde_json::Value::String(format!("{}::{}::{}", address, module, name))
+                    } else if let Some(s) = v.as_str() {
+                        serde_json::Value::String(s.to_string())
+                    } else {
+                        v.clone()
+                    }
+                })
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+pub fn format_events_part(events_response: &serde_json::Value) -> Option<Vec<serde_json::Value>> {
+    if let Some(result) = events_response.get("result") {
+        if let Some(events_array) = result.as_array() {
+            let formatted_events: Vec<serde_json::Value> = events_array
+                .iter()
+                .map(|event| parse_event_data(event))
+                .collect();
+            return Some(formatted_events);
+        }
+    }
+    None
+}
 
 pub async fn get_standard_format_output(tx_hash: &str) -> Option<(serde_json::Value, u64)> {
     let ws_url = "ws://main.seed.starcoin.org:9870";
@@ -47,12 +249,7 @@ pub async fn get_standard_format_output(tx_hash: &str) -> Option<(serde_json::Va
         }
 
         if let Some(formatted_events) = format_events_part(&events) {
-            // If only one event, output as object, else as array
-            if formatted_events.len() == 1 {
-                json["events"] = formatted_events[0].clone();
-            } else {
-                json["events"] = serde_json::to_value(&formatted_events).unwrap();
-            }
+            json["events"] = serde_json::to_value(&formatted_events).unwrap();
         }
     }
 
@@ -139,16 +336,18 @@ mod test {
         let tx_hash = "0xe29d7508fe37d756d83e672be53843d10d084f9c69fca1b7e9a34ea8eb96f918";
 
         let events = r#"
-            {
-                "Data": "0x00000000000000000e78d000000000000bfa368dcc0090000000000000000000000000000567b957b9701000",
-                "Module": "Oracle",
-                "Name": "OracleUpdateEvent<0x82e35b34096f32c42061717c06e44a59::BTC_USD::BTC_USD, u128>",
-                "Key": {
-                    "address": "0x82e35b34096f32c42061717c06e44a59",
-                    "salt": "4"
-                },
-                "Seq": "36,326"
-            }
+            [
+                {
+                    "Data": "0x00000000000000000e78d000000000000bfa368dcc0090000000000000000000000000000567b957b9701000",
+                    "Module": "Oracle",
+                    "Name": "OracleUpdateEvent<0x82e35b34096f32c42061717c06e44a59::BTC_USD::BTC_USD, u128>",
+                    "Key": {
+                        "address": "0x82e35b34096f32c42061717c06e44a59",
+                        "salt": "4"
+                    },
+                    "Seq": "36,326"
+                }
+            ]
         "#;
 
         let raw_data = r#"
