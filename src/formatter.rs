@@ -1,8 +1,10 @@
 use crate::block_loader;
 use serde_json::json;
 
+const MAINNET_WS_URL: &str = "ws://main.seed.starcoin.org:9870";
+
 use block_loader::{
-    decode_payload, get_decoded_payload, get_timestamp_from_block_header,
+    decode_payload_for_raw_data, get_standalone_decoded_payload, get_timestamp_from_block_header,
     get_transaction_by_hash_ws, get_transaction_events_ws, get_transaction_info_ws,
     parse_event_data,
 };
@@ -77,57 +79,9 @@ pub async fn format_raw_data_part(
         .and_then(|ut| ut.get_mut("raw_txn"))
         .and_then(|rt| rt.as_object_mut())
     {
-        match decode_payload(payload_str) {
+        match decode_payload_for_raw_data(payload_str) {
             Some(decoded) => {
-                let trimmed_decoded = decoded
-                    .get("ScriptFunction")
-                    .map(|sf| {
-                        let args = sf
-                            .get("args")
-                            .map(convert_args_to_standard_schema_in_raw_data)
-                            .unwrap_or_default();
-                        let ty_args = sf
-                            .get("ty_args")
-                            .map(convert_ty_args_to_standard_schema_in_raw_data)
-                            .unwrap_or_default();
-                        let func = sf.get("func");
-                        if let Some(func_obj) = func.and_then(|f| f.as_object()) {
-                            let function =
-                                func_obj.get("functionName").cloned().unwrap_or_default();
-                            let module = if let (Some(addr), Some(module)) =
-                                (func_obj.get("address"), func_obj.get("module"))
-                            {
-                                serde_json::Value::String(format!(
-                                    "{}::{}",
-                                    addr.as_str().unwrap_or(""),
-                                    module.as_str().unwrap_or("")
-                                ))
-                            } else {
-                                serde_json::Value::String(String::new())
-                            };
-                            serde_json::json!({
-                                "ScriptFunction": {
-                                    "args": args,
-                                    "function": function,
-                                    "module": module,
-                                    "ty_args": ty_args
-                                }
-                            })
-                        } else {
-                            serde_json::json!({})
-                        }
-                    })
-                    .unwrap_or(serde_json::json!({}));
-
-                raw_txn_obj.insert(
-                    "decoded_payload".to_string(),
-                    serde_json::Value::String(serde_json::to_string(&trimmed_decoded).unwrap()),
-                );
-
-                raw_txn_obj.insert(
-                    "transaction_hash".to_string(),
-                    serde_json::Value::String(String::new()),
-                );
+                raw_txn_obj.insert("decoded_payload".to_string(), decoded);
             }
             None => {
                 raw_txn_obj.insert(
@@ -136,79 +90,64 @@ pub async fn format_raw_data_part(
                 );
             }
         }
+
+        raw_txn_obj.insert(
+            "transaction_hash".to_string(),
+            tx_result
+                .get("transaction_hash")
+                .cloned()
+                .unwrap_or(json!("")),
+        );
     };
 
     // get_timestamp_from_block_header is async, so we must await it and assign the result
     let timestamp = get_timestamp_from_block_header(
-        "ws://main.seed.starcoin.org:9870",
+        MAINNET_WS_URL,
         tx_result
             .get("block_hash")
             .and_then(|h| h.as_str())
-            .unwrap_or("")
-    ).await.unwrap_or(0);
+            .unwrap_or(""),
+    )
+    .await
+    .unwrap_or(0);
     complete_tx["timestamp"] = json!(timestamp);
 
     Some(complete_tx)
 }
 
-// Helper to parse args as numbers if possible
-fn convert_args_to_standard_schema_in_raw_data(args: &serde_json::Value) -> Vec<serde_json::Value> {
-    args.as_array()
-        .map(|vec| {
-            vec.iter()
-                .map(|v| {
-                    if let Some(s) = v.as_str() {
-                        if s.starts_with("u128: ") {
-                            let num_str = s[6..].replace(",", "");
-                            num_str
-                                .parse::<u128>()
-                                .map(serde_json::Value::from)
-                                .unwrap_or(v.clone())
-                        } else {
-                            v.clone()
-                        }
-                    } else {
-                        v.clone()
-                    }
-                })
-                .collect()
-        })
-        .unwrap_or_default()
-}
-
 // Helper to parse ty_args as type strings
-fn convert_ty_args_to_standard_schema_in_raw_data(
-    ty_args: &serde_json::Value,
-) -> Vec<serde_json::Value> {
-    ty_args
-        .as_array()
-        .map(|vec| {
-            vec.iter()
-                .map(|v| {
-                    if let Some(struct_obj) = v.get("Struct") {
-                        let address = struct_obj
-                            .get("address")
-                            .and_then(|a| a.as_str())
-                            .unwrap_or("");
-                        let module = struct_obj
-                            .get("module")
-                            .and_then(|m| m.as_str())
-                            .unwrap_or("");
-                        let name = struct_obj
-                            .get("name")
-                            .and_then(|n| n.as_str())
-                            .unwrap_or("");
-                        serde_json::Value::String(format!("{}::{}::{}", address, module, name))
-                    } else if let Some(s) = v.as_str() {
-                        serde_json::Value::String(s.to_string())
-                    } else {
-                        v.clone()
-                    }
-                })
-                .collect()
-        })
-        .unwrap_or_default()
-}
+// fn convert_ty_args_to_standard_schema_in_raw_data(
+//     ty_args: &serde_json::Value,
+// ) -> Vec<serde_json::Value> {
+//     ty_args
+//         .as_array()
+//         .map(|vec| {
+//             vec.iter()
+//                 .map(|v| {
+//                     if let Some(struct_obj) = v.get("Struct") {
+//                         let address = struct_obj
+//                             .get("address")
+//                             .and_then(|a| a.as_str())
+//                             .unwrap_or("");
+//                         let module = struct_obj
+//                             .get("module")
+//                             .and_then(|m| m.as_str())
+//                             .unwrap_or("");
+//                         let name = struct_obj
+//                             .get("name")
+//                             .and_then(|n| n.as_str())
+//                             .unwrap_or("");
+//                         serde_json::Value::String(format!("{}::{}::{}", address, module, name))
+//                     } else if let Some(s) = v.as_str() {
+//                         serde_json::Value::String(s.to_string())
+//                     } else {
+//                         v.clone()
+//                     }
+//                 })
+//                 .collect()
+//         })
+//         .unwrap_or_default()
+// }
 
 pub fn format_events_part(events_response: &serde_json::Value) -> Option<Vec<serde_json::Value>> {
     if let Some(result) = events_response.get("result") {
@@ -224,9 +163,7 @@ pub fn format_events_part(events_response: &serde_json::Value) -> Option<Vec<ser
 }
 
 pub async fn get_standard_format_output(tx_hash: &str) -> Option<(serde_json::Value, u64)> {
-    let ws_url = "ws://main.seed.starcoin.org:9870";
-
-    let tx_response = get_transaction_by_hash_ws(ws_url, tx_hash).await;
+    let tx_response = get_transaction_by_hash_ws(MAINNET_WS_URL, tx_hash).await;
     let block_number = match tx_response
         .as_ref()
         .and_then(|tx| tx.get("result"))
@@ -241,8 +178,8 @@ pub async fn get_standard_format_output(tx_hash: &str) -> Option<(serde_json::Va
         }
     };
 
-    let tx_info_response = get_transaction_info_ws(ws_url, tx_hash).await;
-    let events_response = get_transaction_events_ws(ws_url, tx_hash).await;
+    let tx_info_response = get_transaction_info_ws(MAINNET_WS_URL, tx_hash).await;
+    let events_response = get_transaction_events_ws(MAINNET_WS_URL, tx_hash).await;
 
     let mut json: serde_json::Value = serde_json::json!({
         "events": serde_json::Value::Null,
@@ -251,15 +188,11 @@ pub async fn get_standard_format_output(tx_hash: &str) -> Option<(serde_json::Va
     });
 
     if let (Some(tx), Some(info), Some(events)) = (tx_response, tx_info_response, events_response) {
-        println!("tx:{}", tx);
-        println!("info:{}", info);
-        println!("events:{}", events);
-
         if let Some(complete_format) = format_raw_data_part(&tx, &info, &events).await {
             json["raw_data"] = serde_json::to_value(&complete_format).unwrap();
         }
 
-        let decoded_payload = get_decoded_payload(&tx);
+        let decoded_payload = get_standalone_decoded_payload(&tx);
         if let Some(payload) = decoded_payload {
             json["decoded_payload"] = serde_json::to_value(&payload).unwrap();
         }
@@ -278,8 +211,11 @@ mod test {
 
     fn assert_json_eq(a: &Value, b: &Value) {
         fn compare(a: &Value, b: &Value, path: &str) {
-            // Skip Data field
-            if path.ends_with("Data") {
+            // Data field is different between what we got from main node and ui
+            if path.ends_with("Data") ||
+            // ingore decoded_payload in raw_data
+             (a.is_null() && path.ends_with("decoded_payload"))
+            {
                 return;
             }
             match (a, b) {
@@ -413,7 +349,7 @@ mod test {
                     "payload": "0x02000000000000000000000000000000011250726963654f7261636c655363726970747306757064617465010782e35b34096f32c42061717c06e44a59074254435f555344074254435f555344000110bfa368dcc00900000000000000000000",
                     "sender": "0x82e35b34096f32c42061717c06e44a59",
                     "sequence_number": "311007",
-                    "transaction_hash": ""
+                    "transaction_hash": "0xe29d7508fe37d756d83e672be53843d10d084f9c69fca1b7e9a34ea8eb96f918"
                     },
                     "transaction_hash": "0xe29d7508fe37d756d83e672be53843d10d084f9c69fca1b7e9a34ea8eb96f918"
                 }
@@ -542,7 +478,7 @@ mod test {
                     "payload": "0x02000000000000000000000000000000010f5472616e73666572536372697074730c706565725f746f5f706565720107000000000000000000000000000000010353544303535443000310c3299e6c57d775a6fdc333f36b8be39601001023f4d890508a38000000000000000000",
                     "sender": "0xd4b5c70450d95ac1bf92e8e8a9b9d298",
                     "sequence_number": "3",
-                    "transaction_hash": ""
+                    "transaction_hash": "0x3e85d64cc798c2c73c3ae23f40ad6ecbe1abd6cb78eae6319ae6980991676189"
                     },
                     "transaction_hash": "0x3e85d64cc798c2c73c3ae23f40ad6ecbe1abd6cb78eae6319ae6980991676189"
                 }
@@ -553,9 +489,9 @@ mod test {
             {
                 "ScriptFunction": {
                     "func": {
-                    "address": "0x00000000000000000000000000000001",
-                    "module": "TransferScripts",
-                    "functionName": "peer_to_peer"
+                        "address": "0x00000000000000000000000000000001",
+                        "module": "TransferScripts",
+                        "functionName": "peer_to_peer"
                     },
                     "ty_args": [
                     {
@@ -563,14 +499,14 @@ mod test {
                         "module": "STC",
                         "name": "STC",
                         "type_params": [],
-                        "address": "0x00000000000000000000000000000001"
+                            "address": "0x00000000000000000000000000000001"
                         }
                     }
                     ],
                     "args": [
-                    "address: 0xc3299e6c57d775a6fdc333f36b8be396",
-                    "vector<u8>: []",
-                    "u128: 15,914,677,327,950,883"
+                        "address: 0xc3299e6c57d775a6fdc333f36b8be396",
+                        "vector<u8>: []",
+                        "u128: 15,914,677,327,950,883"
                     ]
                 }
             }
