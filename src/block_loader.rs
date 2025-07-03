@@ -1,3 +1,4 @@
+use crate::MAINNET_WS_URL;
 use bcs::from_bytes;
 use futures_util::{SinkExt, StreamExt};
 use serde_json::json;
@@ -26,9 +27,14 @@ pub fn decode_payload_for_raw_data(_hex_payload: &str) -> Option<serde_json::Val
     Some(serde_json::Value::Null)
 }
 
-pub fn decode_payload_for_standalone_decoded_payload(
+pub async fn decode_payload_for_standalone_decoded_payload(
     hex_payload: &str,
 ) -> Option<serde_json::Value> {
+    let function_signature = resolve_function(MAINNET_WS_URL, hex_payload).await;
+    if let Some(function_signature) = function_signature {
+        println!("function_signature: {:?}", function_signature);
+    }
+
     let payload_bytes = hex::decode(hex_payload.strip_prefix("0x")?).ok()?;
     let payload: TransactionPayload = from_bytes(&payload_bytes).ok()?;
 
@@ -276,19 +282,24 @@ pub fn parse_event_data(event: &serde_json::Value) -> serde_json::Value {
     parsed_event
 }
 
-pub fn get_standalone_decoded_payload(
+pub async fn get_standalone_decoded_payload(
     tx_response: &serde_json::Value,
 ) -> Option<serde_json::Value> {
-    tx_response
+    let payload_opt = tx_response
         .get("result")
         .and_then(|r| r.get("user_transaction"))
         .and_then(|u| u.get("raw_txn"))
         .and_then(|t| t.get("payload"))
-        .and_then(|p| p.as_str())
-        .and_then(decode_payload_for_standalone_decoded_payload)
+        .and_then(|p| p.as_str());
+
+    if let Some(payload_str) = payload_opt {
+        decode_payload_for_standalone_decoded_payload(payload_str).await
+    } else {
+        None
+    }
 }
 
-pub async fn resolve_function(ws_url: &str, arg: &str) -> Option<serde_json::Value> {
+async fn resolve_function(ws_url: &str, arg: &str) -> Option<serde_json::Value> {
     let url = Url::parse(ws_url).ok()?;
 
     let request_payload = json!({

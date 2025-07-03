@@ -1,7 +1,6 @@
 use crate::block_loader;
 use serde_json::json;
-
-const MAINNET_WS_URL: &str = "ws://main.seed.starcoin.org:9870";
+use crate::MAINNET_WS_URL;
 
 use block_loader::{
     decode_payload_for_raw_data, get_standalone_decoded_payload, get_timestamp_from_block_header,
@@ -192,7 +191,7 @@ pub async fn get_standard_format_output(tx_hash: &str) -> Option<(serde_json::Va
             json["raw_data"] = serde_json::to_value(&complete_format).unwrap();
         }
 
-        let decoded_payload = get_standalone_decoded_payload(&tx);
+        let decoded_payload = get_standalone_decoded_payload(&tx).await;
         if let Some(payload) = decoded_payload {
             json["decoded_payload"] = serde_json::to_value(&payload).unwrap();
         }

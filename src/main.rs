@@ -2,6 +2,8 @@ mod block_loader;
 mod formatter;
 use crate::formatter::get_standard_format_output;
 
+const MAINNET_WS_URL: &str = "ws://main.seed.starcoin.org:9870";
+
 #[tokio::main]
 async fn main() {
     let args: Vec<String> = std::env::args().collect();
