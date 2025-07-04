@@ -89,40 +89,6 @@ pub async fn format_raw_data_part(
     Some(complete_tx)
 }
 
-// Helper to parse ty_args as type strings
-// fn convert_ty_args_to_standard_schema_in_raw_data(
-//     ty_args: &serde_json::Value,
-// ) -> Vec<serde_json::Value> {
-//     ty_args
-//         .as_array()
-//         .map(|vec| {
-//             vec.iter()
-//                 .map(|v| {
-//                     if let Some(struct_obj) = v.get("Struct") {
-//                         let address = struct_obj
-//                             .get("address")
-//                             .and_then(|a| a.as_str())
-//                             .unwrap_or("");
-//                         let module = struct_obj
-//                             .get("module")
-//                             .and_then(|m| m.as_str())
-//                             .unwrap_or("");
-//                         let name = struct_obj
-//                             .get("name")
-//                             .and_then(|n| n.as_str())
-//                             .unwrap_or("");
-//                         serde_json::Value::String(format!("{}::{}::{}", address, module, name))
-//                     } else if let Some(s) = v.as_str() {
-//                         serde_json::Value::String(s.to_string())
-//                     } else {
-//                         v.clone()
-//                     }
-//                 })
-//                 .collect()
-//         })
-//         .unwrap_or_default()
-// }
-
 pub fn format_events_part(events_response: &serde_json::Value) -> Option<Vec<serde_json::Value>> {
     if let Some(result) = events_response.get("result") {
         if let Some(events_array) = result.as_array() {
@@ -147,7 +113,6 @@ pub async fn get_standard_format_output(tx_hash: &str) -> Option<(serde_json::Va
     {
         Some(n) => n,
         None => {
-            println!("not found in any blocks");
             return None;
         }
     };
