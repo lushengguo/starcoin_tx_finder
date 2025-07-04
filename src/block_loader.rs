@@ -41,6 +41,53 @@ fn collect_type_tags(resolve_function_response: &Option<serde_json::Value>) -> V
     }
 }
 
+fn parse_module_info(module: &str) -> (String, String) {
+    if let Some(idx) = module.find("::") {
+        (module[..idx].to_string(), module[idx + 2..].to_string())
+    } else {
+        (module.to_string(), String::new())
+    }
+}
+
+fn parse_ty_arg(ty_str: &str) -> serde_json::Value {
+    if let Some((address, rest)) = ty_str.split_once("::") {
+        if let Some((module, name)) = rest.split_once("::") {
+            json!({
+                "Struct": {
+                    "address": address,
+                    "module": module,
+                    "name": name,
+                    "type_params": []
+                }
+            })
+        } else {
+            json!(ty_str)
+        }
+    } else {
+        json!(ty_str)
+    }
+}
+
+fn create_script_function_json(
+    address: String,
+    module_name: String,
+    function: String,
+    ty_args: Vec<serde_json::Value>,
+    args: Vec<serde_json::Value>,
+) -> serde_json::Value {
+    json!({
+        "ScriptFunction": {
+            "func": {
+                "address": address,
+                "module": module_name,
+                "functionName": function
+            },
+            "ty_args": ty_args,
+            "args": args
+        }
+    })
+}
+
 pub async fn decode_payload_for_standalone_decoded_payload(
     hex_payload: &str,
 ) -> Option<serde_json::Value> {
@@ -51,40 +98,16 @@ pub async fn decode_payload_for_standalone_decoded_payload(
         TransactionPayload::ScriptFunction(sf) => {
             let module = sf.module().to_string();
             let function = sf.function().to_string();
-            let (address, module_name) = if let Some(idx) = module.find("::") {
-                (module[..idx].to_string(), module[idx + 2..].to_string())
-            } else {
-                (module.clone(), String::new())
-            };
+            let (address, module_name) = parse_module_info(&module);
 
             let param = module + "::" + &function;
             let function_signature = resolve_function(MAINNET_WS_URL, &param).await;
-
             let type_tags = collect_type_tags(&function_signature);
 
             let ty_args = sf
                 .ty_args()
                 .iter()
-                .map(|ty| {
-                    let ty_str = ty.to_string();
-                    // Try to parse Struct type: 0x...::Module::Name
-                    if let Some((address, rest)) = ty_str.split_once("::") {
-                        if let Some((module, name)) = rest.split_once("::") {
-                            json!({
-                                "Struct": {
-                                    "address": address,
-                                    "module": module,
-                                    "name": name,
-                                    "type_params": []
-                                }
-                            })
-                        } else {
-                            json!(ty_str)
-                        }
-                    } else {
-                        json!(ty_str)
-                    }
-                })
+                .map(|ty| parse_ty_arg(&ty.to_string()))
                 .collect::<Vec<_>>();
 
             let args = sf
@@ -94,17 +117,7 @@ pub async fn decode_payload_for_standalone_decoded_payload(
                 .map(|(index, arg)| annotate_arg(arg, &type_tags, index))
                 .collect::<Vec<_>>();
 
-            Some(json!({
-                "ScriptFunction": {
-                    "func": {
-                        "address": address,
-                        "module": module_name,
-                        "functionName": function
-                    },
-                    "ty_args": ty_args,
-                    "args": args
-                }
-            }))
+            Some(create_script_function_json(address, module_name, function, ty_args, args))
         }
         _ => None,
     }
@@ -508,5 +521,107 @@ mod tests {
         });
         let result8 = collect_type_tags(&Some(invalid_args_response));
         assert_eq!(result8, Vec::<String>::new());
+    }
+
+    #[test]
+    fn test_parse_module_info() {
+        // Test with valid module format
+        let result1 = parse_module_info("0x00000000000000000000000000000001::TransferScripts");
+        assert_eq!(
+            result1,
+            (
+                "0x00000000000000000000000000000001".to_string(),
+                "TransferScripts".to_string()
+            )
+        );
+
+        // Test with nested module format
+        let result2 = parse_module_info("0x1::Token::STC");
+        assert_eq!(result2, ("0x1".to_string(), "Token::STC".to_string()));
+
+        // Test with module without namespace separator
+        let result3 = parse_module_info("SimpleModule");
+        assert_eq!(result3, ("SimpleModule".to_string(), String::new()));
+
+        // Test with empty string
+        let result4 = parse_module_info("");
+        assert_eq!(result4, (String::new(), String::new()));
+    }
+
+    #[test]
+    fn test_parse_ty_arg() {
+        // Test with valid Struct type
+        let result1 = parse_ty_arg("0x1::STC::STC");
+        let expected1 = json!({
+            "Struct": {
+                "address": "0x1",
+                "module": "STC",
+                "name": "STC",
+                "type_params": []
+            }
+        });
+        assert_eq!(result1, expected1);
+
+        // Test with incomplete module path (only address::module)
+        let result2 = parse_ty_arg("0x1::Token");
+        assert_eq!(result2, json!("0x1::Token"));
+
+        // Test with simple type (no :: separator)
+        let result3 = parse_ty_arg("U64");
+        assert_eq!(result3, json!("U64"));
+
+        // Test with complex nested type
+        let result4 = parse_ty_arg("0x00000000000000000000000000000001::Account::Balance");
+        let expected4 = json!({
+            "Struct": {
+                "address": "0x00000000000000000000000000000001",
+                "module": "Account",
+                "name": "Balance",
+                "type_params": []
+            }
+        });
+        assert_eq!(result4, expected4);
+    }
+
+    #[test]
+    fn test_create_script_function_json() {
+        let address = "0x1".to_string();
+        let module_name = "TransferScripts".to_string();
+        let function = "peer_to_peer".to_string();
+        let ty_args = vec![json!({
+            "Struct": {
+                "address": "0x1",
+                "module": "STC",
+                "name": "STC",
+                "type_params": []
+            }
+        })];
+        let args = vec![
+            json!("Signer: 0x01"),
+            json!("Address: 0x02"),
+            json!("U128: 0x03"),
+        ];
+
+        let result = create_script_function_json(
+            address,
+            module_name,
+            function,
+            ty_args.clone(),
+            args.clone(),
+        );
+
+        let expected = json!({
+            "ScriptFunction": {
+                "func": {
+                    "address": "0x1",
+                    "module": "TransferScripts",
+                    "functionName": "peer_to_peer"
+                },
+                "ty_args": ty_args,
+                "args": args
+            }
+        });
+
+        assert_eq!(result, expected);
     }
 }
