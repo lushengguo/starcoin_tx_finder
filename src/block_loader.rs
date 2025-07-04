@@ -624,4 +624,167 @@ mod tests {
 
         assert_eq!(result, expected);
     }
+
+    #[test]
+    fn test_parse_event_data() {
+        // Test with complete event data
+        let complete_event = json!({
+            "data": "0x1234567890abcdef",
+            "type_tag": "0x00000000000000000000000000000001::TransferScripts::TransferEvent",
+            "event_key": "0x12345678901234567890123456789012000000000000000000000001",
+            "event_seq_number": "12345"
+        });
+        let result1 = parse_event_data(&complete_event);
+        assert_eq!(result1["Data"], json!("0x1234567890abcdef"));
+        assert_eq!(result1["Module"], json!("TransferScripts"));
+        assert_eq!(result1["Name"], json!("TransferEvent"));
+        assert_eq!(result1["Seq"], json!("12,345"));
+        assert!(result1.get("Key").is_some());
+
+        // Test with minimal event data (only data field)
+        let minimal_event = json!({
+            "data": "0xabcd"
+        });
+        let result2 = parse_event_data(&minimal_event);
+        assert_eq!(result2["Data"], json!("0xabcd"));
+        assert!(result2.get("Module").is_none());
+        assert!(result2.get("Name").is_none());
+        assert!(result2.get("Key").is_none());
+        assert!(result2.get("Seq").is_none());
+
+        // Test with missing data field
+        let no_data_event = json!({
+            "type_tag": "0x1::Token::TransferEvent",
+            "event_seq_number": "100"
+        });
+        let result3 = parse_event_data(&no_data_event);
+        assert!(result3.get("Data").is_none());
+        assert_eq!(result3["Module"], json!("Token"));
+        assert_eq!(result3["Name"], json!("TransferEvent"));
+        assert_eq!(result3["Seq"], json!("100"));
+
+        // Test with different type_tag formats
+
+        // Simple type_tag without generics
+        let simple_type_event = json!({
+            "type_tag": "0x1::Account::DepositEvent"
+        });
+        let result4 = parse_event_data(&simple_type_event);
+        assert_eq!(result4["Module"], json!("Account"));
+        assert_eq!(result4["Name"], json!("DepositEvent"));
+
+        // Type_tag with generics
+        let generic_type_event = json!({
+            "type_tag": "0x1::Token::TransferEvent<0x1::STC::STC>"
+        });
+        let result5 = parse_event_data(&generic_type_event);
+        assert_eq!(result5["Module"], json!("Token"));
+        assert_eq!(result5["Name"], json!("TransferEvent<0x1::STC::STC>"));
+
+        // Invalid type_tag format (missing module separator)
+        let invalid_type_event = json!({
+            "type_tag": "InvalidTypeTag"
+        });
+        let result6 = parse_event_data(&invalid_type_event);
+        assert!(result6.get("Module").is_none());
+        assert!(result6.get("Name").is_none());
+
+        // Type_tag with only one separator
+        let single_sep_type_event = json!({
+            "type_tag": "0x1::OnlyModule"
+        });
+        let result7 = parse_event_data(&single_sep_type_event);
+        assert!(result7.get("Module").is_none());
+        assert!(result7.get("Name").is_none());
+
+        // Test various event_key formats
+
+        // Valid event_key
+        let valid_key_event = json!({
+            "event_key": "0x12345678901234567890123456789012000000000000000000000001"
+        });
+        let result8 = parse_event_data(&valid_key_event);
+        let key = result8.get("Key").unwrap();
+        assert_eq!(
+            key["address"],
+            json!("0x7890123456789012000000000000000000000001")
+        );
+        assert!(key.get("salt").is_some());
+
+        // Event_key too short
+        let short_key_event = json!({
+            "event_key": "0x123456"
+        });
+        let result9 = parse_event_data(&short_key_event);
+        assert!(result9.get("Key").is_none());
+
+        // Event_key with invalid hex
+        let invalid_hex_event = json!({
+            "event_key": "0xzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz000000000000000000000001"
+        });
+        let result10 = parse_event_data(&invalid_hex_event);
+        assert!(result10.get("Key").is_none());
+
+        // Event_key exactly 42 characters (minimum length)
+        let min_length_key_event = json!({
+            "event_key": "0x123456789012345678901234567890ab000000000000000000000001"
+        });
+        let result11 = parse_event_data(&min_length_key_event);
+        assert!(result11.get("Key").is_some());
+
+        // Test event_seq_number variations
+
+        // Valid sequence number
+        let valid_seq_event = json!({
+            "event_seq_number": "1000000"
+        });
+        let result12 = parse_event_data(&valid_seq_event);
+        assert_eq!(result12["Seq"], json!("1,000,000"));
+
+        // Invalid sequence number (not a number)
+        let invalid_seq_event = json!({
+            "event_seq_number": "not_a_number"
+        });
+        let result13 = parse_event_data(&invalid_seq_event);
+        assert!(result13.get("Seq").is_none());
+
+        // Sequence number as integer instead of string
+        let int_seq_event = json!({
+            "event_seq_number": 12345
+        });
+        let result14 = parse_event_data(&int_seq_event);
+        assert!(result14.get("Seq").is_none());
+
+        // Test edge cases
+
+        // Empty JSON object
+        let empty_event = json!({});
+        let result15 = parse_event_data(&empty_event);
+        assert_eq!(result15, json!({}));
+
+        // All fields present but with null values
+        let null_fields_event = json!({
+            "data": null,
+            "type_tag": null,
+            "event_key": null,
+            "event_seq_number": null
+        });
+        let result16 = parse_event_data(&null_fields_event);
+        assert!(result16.get("Data").is_some()); // null is cloned as null
+        assert!(result16.get("Module").is_none());
+        assert!(result16.get("Name").is_none());
+        assert!(result16.get("Key").is_none());
+        assert!(result16.get("Seq").is_none());
+
+        // Very long type_tag with multiple generics
+        let complex_type_event = json!({
+            "type_tag": "0x00000000000000000000000000000001::ComplexModule::ComplexEvent<0x1::Token::STC, 0x2::NFT::Collection>"
+        });
+        let result17 = parse_event_data(&complex_type_event);
+        assert_eq!(result17["Module"], json!("ComplexModule"));
+        assert_eq!(
+            result17["Name"],
+            json!("ComplexEvent<0x1::Token::STC, 0x2::NFT::Collection>")
+        );
+    }
 }
