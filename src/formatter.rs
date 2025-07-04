@@ -60,7 +60,6 @@ pub async fn format_raw_data_part(
     }
 
     // Extract user_transaction and payload_str before any mutable borrow
-    let user_transaction = complete_tx.get("user_transaction").cloned();
     if let Some(raw_txn_obj) = complete_tx
         .get_mut("user_transaction")
         .and_then(|ut| ut.get_mut("raw_txn"))
@@ -184,6 +183,7 @@ mod test {
     use super::*;
     use serde_json::Value;
 
+    #[allow(dead_code)]
     fn assert_json_eq(a: &Value, b: &Value) {
         fn compare(a: &Value, b: &Value, path: &str) {
             // Data field is different between what we got from main node and ui
@@ -255,6 +255,7 @@ mod test {
         compare(a, b, "");
     }
 
+    #[allow(dead_code)]
     async fn assert_standard_format_eq_to(tx_hash: &str, expected: &serde_json::Value) {
         let result = get_standard_format_output(tx_hash).await;
         assert!(result.is_some(), "Transaction not found");

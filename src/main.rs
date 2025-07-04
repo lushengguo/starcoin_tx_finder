@@ -26,7 +26,6 @@ async fn main() {
                     "this transaction is not found in the first 20000 blocks, it was found in block number: {}",
                     block_number
                 );
-                println!("{}", serde_json::to_string_pretty(&json).unwrap());
             } else {
                 println!("{}", serde_json::to_string_pretty(&json).unwrap());
             }
