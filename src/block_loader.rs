@@ -6,16 +6,38 @@ use starcoin_types::transaction::TransactionPayload;
 use tokio_tungstenite::connect_async;
 use url::Url;
 
-fn decode_arg(arg: &[u8], type_tags: &Vec<String>) -> serde_json::Value {
-    println!("type args: {:?}", type_tags);
-    if arg.len() == 16 {
-        let mut buf = [0u8; 16];
-        buf.copy_from_slice(arg);
-        let value = u128::from_le_bytes(buf);
-        let formatted = format!("u128: {}", thousands_separator(value));
-        serde_json::Value::String(formatted)
+fn annotate_arg(arg: &[u8], type_tags: &Vec<String>, index: usize) -> serde_json::Value {
+    if index + 1 < type_tags.len() {
+        serde_json::Value::String(format!("{}: {}", &type_tags[index + 1], hex::encode(arg)))
     } else {
-        serde_json::Value::String(format!("0x{}", hex::encode(arg)))
+        serde_json::Value::String(format!("no_type {}", hex::encode(arg)))
+    }
+}
+
+fn collect_type_tags(resolve_function_response: &Option<serde_json::Value>) -> Vec<String> {
+    if let Some(resolve_function_response) = resolve_function_response {
+        resolve_function_response
+            .get("result")
+            .and_then(|result| result.get("args"))
+            .and_then(|args| args.as_array())
+            .map(|args_array| {
+                args_array
+                    .iter()
+                    .filter_map(|arg| arg.get("type_tag"))
+                    .map(|type_tag| {
+                        if let Some(type_str) = type_tag.as_str() {
+                            type_str.to_string()
+                        } else if let Some(vector_type) = type_tag.get("Vector") {
+                            format!("Vector<{}>", vector_type.as_str().unwrap_or("Unknown"))
+                        } else {
+                            format!("{:?}", type_tag)
+                        }
+                    })
+                    .collect()
+            })
+            .unwrap_or_default()
+    } else {
+        Vec::new()
     }
 }
 
@@ -38,22 +60,7 @@ pub async fn decode_payload_for_standalone_decoded_payload(
             let param = module + "::" + &function;
             let function_signature = resolve_function(MAINNET_WS_URL, &param).await;
 
-            let mut type_tags: Vec<String> = Vec::new();
-            if let Some(function_signature) = function_signature {
-                type_tags = function_signature
-                    .get("result")
-                    .and_then(|result| result.get("args"))
-                    .and_then(|args| args.as_array())
-                    .map(|args_array| {
-                        args_array
-                            .iter()
-                            .filter_map(|arg| arg.get("type_tag"))
-                            .filter_map(|type_tag| type_tag.as_str())
-                            .map(|type_tag_str| type_tag_str.to_string())
-                            .collect()
-                    })
-                    .unwrap_or_default();
-            }
+            let type_tags = collect_type_tags(&function_signature);
 
             let ty_args = sf
                 .ty_args()
@@ -83,7 +90,8 @@ pub async fn decode_payload_for_standalone_decoded_payload(
             let args = sf
                 .args()
                 .iter()
-                .map(|arg| decode_arg(arg, &type_tags))
+                .enumerate()
+                .map(|(index, arg)| annotate_arg(arg, &type_tags, index))
                 .collect::<Vec<_>>();
 
             Some(json!({
