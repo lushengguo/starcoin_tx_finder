@@ -24,13 +24,13 @@ fn collect_type_tags(resolve_function_response: &Option<serde_json::Value>) -> V
                 args_array
                     .iter()
                     .filter_map(|arg| arg.get("type_tag"))
-                    .map(|type_tag| {
+                    .filter_map(|type_tag| {
                         if let Some(type_str) = type_tag.as_str() {
-                            type_str.to_string()
+                            Some(type_str.to_string())
                         } else if let Some(vector_type) = type_tag.get("Vector") {
-                            format!("Vector<{}>", vector_type.as_str().unwrap_or("Unknown"))
+                            vector_type.as_str().map(|inner_type| format!("Vector<{}>", inner_type))
                         } else {
-                            format!("{type_tag:?}")
+                            Some(format!("{type_tag:?}"))
                         }
                     })
                     .collect()
@@ -387,5 +387,126 @@ mod tests {
         // Test around billion boundaries
         assert_eq!(thousands_separator(999999999), "999,999,999");
         assert_eq!(thousands_separator(1000000000), "1,000,000,000");
+    }
+
+    #[test]
+    fn test_annotate_arg() {
+        let type_tags = vec![
+            "Signer".to_string(),
+            "Address".to_string(),
+            "U128".to_string(),
+        ];
+
+        // Test with valid index
+        let arg1 = vec![0x01, 0x02, 0x03, 0x04];
+        let result1 = annotate_arg(&arg1, &type_tags, 0);
+        assert_eq!(
+            result1,
+            serde_json::Value::String("Address: 01020304".to_string())
+        );
+
+        // Test with another valid index
+        let arg2 = vec![0xab, 0xcd, 0xef];
+        let result2 = annotate_arg(&arg2, &type_tags, 1);
+        assert_eq!(
+            result2,
+            serde_json::Value::String("U128: abcdef".to_string())
+        );
+
+        // Test with index out of bounds
+        let arg3 = vec![0xff, 0xee];
+        let result3 = annotate_arg(&arg3, &type_tags, 2);
+        assert_eq!(
+            result3,
+            serde_json::Value::String("no_type ffee".to_string())
+        );
+
+        // Test with empty type_tags
+        let empty_tags: Vec<String> = vec![];
+        let result4 = annotate_arg(&arg1, &empty_tags, 0);
+        assert_eq!(
+            result4,
+            serde_json::Value::String("no_type 01020304".to_string())
+        );
+    }
+
+    #[test]
+    fn test_collect_type_tags() {
+        // Test with valid JSON response
+        let valid_response = json!({
+            "result": {
+                "args": [
+                    {"type_tag": "Signer", "name": "p0"},
+                    {"type_tag": "Address", "name": "p1"},
+                    {"type_tag": {"Vector": "U8"}, "name": "p2"},
+                    {"type_tag": "U128", "name": "p3"}
+                ]
+            }
+        });
+        let result1 = collect_type_tags(&Some(valid_response));
+        assert_eq!(result1, vec!["Signer", "Address", "Vector<U8>", "U128"]);
+
+        // Test with Vector type having unknown inner type (should be filtered out)
+        let vector_unknown_response = json!({
+            "result": {
+                "args": [
+                    {"type_tag": "Signer", "name": "p0"},
+                    {"type_tag": {"Vector": null}, "name": "p1"},
+                    {"type_tag": "U128", "name": "p2"}
+                ]
+            }
+        });
+        let result2 = collect_type_tags(&Some(vector_unknown_response));
+        assert_eq!(result2, vec!["Signer", "U128"]);
+
+        // Test with complex type tag
+        let complex_response = json!({
+            "result": {
+                "args": [
+                    {"type_tag": {"Struct": {"address": "0x1", "module": "STC"}}, "name": "p0"}
+                ]
+            }
+        });
+        let result3 = collect_type_tags(&Some(complex_response));
+        assert_eq!(result3.len(), 1);
+        assert!(result3[0].contains("Struct"));
+
+        // Test with None response
+        let result4 = collect_type_tags(&None);
+        assert_eq!(result4, Vec::<String>::new());
+
+        // Test with empty args array
+        let empty_args_response = json!({
+            "result": {
+                "args": []
+            }
+        });
+        let result5 = collect_type_tags(&Some(empty_args_response));
+        assert_eq!(result5, Vec::<String>::new());
+
+        // Test with missing result field
+        let no_result_response = json!({
+            "error": "something went wrong"
+        });
+        let result6 = collect_type_tags(&Some(no_result_response));
+        assert_eq!(result6, Vec::<String>::new());
+
+        // Test with missing args field
+        let no_args_response = json!({
+            "result": {
+                "other_field": "value"
+            }
+        });
+        let result7 = collect_type_tags(&Some(no_args_response));
+        assert_eq!(result7, Vec::<String>::new());
+
+        // Test with args not being an array
+        let invalid_args_response = json!({
+            "result": {
+                "args": "not_an_array"
+            }
+        });
+        let result8 = collect_type_tags(&Some(invalid_args_response));
+        assert_eq!(result8, Vec::<String>::new());
     }
 }
