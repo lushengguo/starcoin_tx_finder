@@ -333,3 +333,59 @@ async fn resolve_function(ws_url: &str, arg: &str) -> Option<serde_json::Value> 
 
     None
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_thousands_separator_basic() {
+        assert_eq!(thousands_separator(0), "0");
+        assert_eq!(thousands_separator(123), "123");
+        assert_eq!(thousands_separator(1234), "1,234");
+        assert_eq!(thousands_separator(12345), "12,345");
+        assert_eq!(thousands_separator(123456), "123,456");
+        assert_eq!(thousands_separator(1234567), "1,234,567");
+        assert_eq!(thousands_separator(12345678), "12,345,678");
+        assert_eq!(thousands_separator(123456789), "123,456,789");
+        assert_eq!(thousands_separator(1234567890), "1,234,567,890");
+    }
+
+    #[test]
+    fn test_thousands_separator_edge_cases() {
+        assert_eq!(thousands_separator(999), "999");
+        assert_eq!(thousands_separator(1000), "1,000");
+        assert_eq!(thousands_separator(1001), "1,001");
+        assert_eq!(thousands_separator(9999), "9,999");
+        assert_eq!(thousands_separator(10000), "10,000");
+        assert_eq!(thousands_separator(100000), "100,000");
+        assert_eq!(thousands_separator(1000000), "1,000,000");
+    }
+
+    #[test]
+    fn test_thousands_separator_large_numbers() {
+        assert_eq!(
+            thousands_separator(12345678901234567890_u128),
+            "12,345,678,901,234,567,890"
+        );
+        assert_eq!(
+            thousands_separator(u128::MAX),
+            "340,282,366,920,938,463,463,374,607,431,768,211,455"
+        );
+    }
+
+    #[test]
+    fn test_thousands_separator_boundaries() {
+        // Test around thousand boundaries
+        assert_eq!(thousands_separator(999), "999");
+        assert_eq!(thousands_separator(1000), "1,000");
+
+        // Test around million boundaries
+        assert_eq!(thousands_separator(999999), "999,999");
+        assert_eq!(thousands_separator(1000000), "1,000,000");
+
+        // Test around billion boundaries
+        assert_eq!(thousands_separator(999999999), "999,999,999");
+        assert_eq!(thousands_separator(1000000000), "1,000,000,000");
+    }
+}
