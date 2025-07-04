@@ -90,15 +90,14 @@ pub async fn format_raw_data_part(
 }
 
 pub fn format_events_part(events_response: &serde_json::Value) -> Option<Vec<serde_json::Value>> {
-    if let Some(result) = events_response.get("result") {
-        if let Some(events_array) = result.as_array() {
+    if let Some(result) = events_response.get("result")
+        && let Some(events_array) = result.as_array() {
             let formatted_events: Vec<serde_json::Value> = events_array
                 .iter()
-                .map(|event| parse_event_data(event))
+                .map(parse_event_data)
                 .collect();
             return Some(formatted_events);
         }
-    }
     None
 }
 
@@ -168,13 +167,12 @@ mod test {
                         let new_path = if path.is_empty() {
                             k.clone()
                         } else {
-                            format!("{}.{}", path, k)
+                            format!("{path}.{k}")
                         };
                         match map_b.get(k) {
                             Some(vb) => compare(va, vb, &new_path),
                             None => panic!(
-                                "Key '{}' present in left but missing in right at path '{}', value: {}",
-                                k, new_path, va
+                                "Key '{k}' present in left but missing in right at path '{new_path}', value: {va}"
                             ),
                         }
                     }
@@ -183,11 +181,10 @@ mod test {
                             let new_path = if path.is_empty() {
                                 k.clone()
                             } else {
-                                format!("{}.{}", path, k)
+                                format!("{path}.{k}")
                             };
                             panic!(
-                                "Key '{}' present in right but missing in left at path '{}'",
-                                k, new_path
+                                "Key '{k}' present in right but missing in left at path '{new_path}'"
                             );
                         }
                     }
@@ -202,7 +199,7 @@ mod test {
                         );
                     }
                     for (i, (va, vb)) in arr_a.iter().zip(arr_b.iter()).enumerate() {
-                        compare(va, vb, &format!("{}[{}]", path, i));
+                        compare(va, vb, &format!("{path}[{i}]"));
                     }
                 }
                 _ => {

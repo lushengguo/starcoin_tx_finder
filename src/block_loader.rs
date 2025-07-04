@@ -6,7 +6,7 @@ use starcoin_types::transaction::TransactionPayload;
 use tokio_tungstenite::connect_async;
 use url::Url;
 
-fn annotate_arg(arg: &[u8], type_tags: &Vec<String>, index: usize) -> serde_json::Value {
+fn annotate_arg(arg: &[u8], type_tags: &[String], index: usize) -> serde_json::Value {
     if index + 1 < type_tags.len() {
         serde_json::Value::String(format!("{}: {}", &type_tags[index + 1], hex::encode(arg)))
     } else {
@@ -30,7 +30,7 @@ fn collect_type_tags(resolve_function_response: &Option<serde_json::Value>) -> V
                         } else if let Some(vector_type) = type_tag.get("Vector") {
                             format!("Vector<{}>", vector_type.as_str().unwrap_or("Unknown"))
                         } else {
-                            format!("{:?}", type_tag)
+                            format!("{type_tag:?}")
                         }
                     })
                     .collect()
@@ -113,13 +113,11 @@ pub async fn decode_payload_for_standalone_decoded_payload(
 fn thousands_separator(n: u128) -> String {
     let s = n.to_string();
     let mut result = String::new();
-    let mut count = 0;
-    for c in s.chars().rev() {
+    for (count, c) in s.chars().rev().enumerate() {
         if count != 0 && count % 3 == 0 {
             result.push(',');
         }
         result.push(c);
-        count += 1;
     }
     result.chars().rev().collect()
 }
@@ -147,13 +145,11 @@ pub async fn get_timestamp_from_block_header(ws_url: &str, block_hash: &str) -> 
     {
         let json: serde_json::Value = serde_json::from_str(&response).ok()?;
 
-        if let Some(result) = json.get("result") {
-            if let Some(header) = result.get("header") {
-                if let Some(timestamp) = header.get("timestamp") {
+        if let Some(result) = json.get("result")
+            && let Some(header) = result.get("header")
+                && let Some(timestamp) = header.get("timestamp") {
                     return timestamp.as_str().and_then(|s| s.parse::<i64>().ok());
                 }
-            }
-        }
     }
 
     None
@@ -244,9 +240,9 @@ pub fn parse_event_data(event: &serde_json::Value) -> serde_json::Value {
         parsed_event["Data"] = data.clone();
     }
 
-    if let Some(type_tag) = event.get("type_tag") {
-        if let Some(type_str) = type_tag.as_str() {
-            if let Some(module_start) = type_str.find("::") {
+    if let Some(type_tag) = event.get("type_tag")
+        && let Some(type_str) = type_tag.as_str()
+            && let Some(module_start) = type_str.find("::") {
                 let after_address = &type_str[module_start + 2..];
                 if let Some(module_end) = after_address.find("::") {
                     let module_name = &after_address[..module_end];
@@ -257,17 +253,15 @@ pub fn parse_event_data(event: &serde_json::Value) -> serde_json::Value {
                         serde_json::Value::String(event_name_with_generics.to_string());
                 }
             }
-        }
-    }
 
-    if let Some(event_key) = event.get("event_key") {
-        if let Some(key_str) = event_key.as_str() {
-            if key_str.len() >= 42 {
+    if let Some(event_key) = event.get("event_key")
+        && let Some(key_str) = event_key.as_str()
+            && key_str.len() >= 42 {
                 let salt_part = &key_str[2..18];
                 let address_part = &key_str[18..];
 
-                if let Ok(salt_bytes) = hex::decode(salt_part) {
-                    if salt_bytes.len() >= 4 {
+                if let Ok(salt_bytes) = hex::decode(salt_part)
+                    && salt_bytes.len() >= 4 {
                         let salt = u32::from_le_bytes([
                             salt_bytes[0],
                             salt_bytes[1],
@@ -279,19 +273,14 @@ pub fn parse_event_data(event: &serde_json::Value) -> serde_json::Value {
                             "salt": salt.to_string()
                         });
                     }
-                }
             }
-        }
-    }
 
-    if let Some(seq) = event.get("event_seq_number") {
-        if let Some(seq_str) = seq.as_str() {
-            if let Ok(seq_num) = seq_str.parse::<u64>() {
+    if let Some(seq) = event.get("event_seq_number")
+        && let Some(seq_str) = seq.as_str()
+            && let Ok(seq_num) = seq_str.parse::<u64>() {
                 parsed_event["Seq"] =
                     serde_json::Value::String(thousands_separator(seq_num as u128));
             }
-        }
-    }
 
     parsed_event
 }

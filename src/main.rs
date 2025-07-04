@@ -23,8 +23,7 @@ async fn main() {
         Some((json, block_number)) => {
             if block_number >= 20000 {
                 println!(
-                    "this transaction is not found in the first 20000 blocks, it was found in block number: {}",
-                    block_number
+                    "this transaction is not found in the first 20000 blocks, it was found in block number: {block_number}"
                 );
             } else {
                 println!("{}", serde_json::to_string_pretty(&json).unwrap());
