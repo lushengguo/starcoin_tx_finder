@@ -306,10 +306,19 @@ pub async fn get_standalone_decoded_payload(
         .and_then(|t| t.get("payload"))
         .and_then(|p| p.as_str());
 
+    let original_decoded_payload = tx_response
+        .get("result")
+        .and_then(|r| r.get("user_transaction"))
+        .and_then(|u| u.get("raw_txn"))
+        .and_then(|t| t.get("decoded_payload"));
+
     if let Some(payload_str) = payload_opt {
-        decode_payload_for_standalone_decoded_payload(payload_str).await
+        match decode_payload_for_standalone_decoded_payload(payload_str).await {
+            Some(decoded_payload) => Some(decoded_payload),
+            None => original_decoded_payload.cloned(),
+        }
     } else {
-        None
+        original_decoded_payload.cloned()
     }
 }
 
