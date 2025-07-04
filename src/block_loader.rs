@@ -28,7 +28,7 @@ fn collect_type_tags(resolve_function_response: &Option<serde_json::Value>) -> V
                         if let Some(type_str) = type_tag.as_str() {
                             Some(type_str.to_string())
                         } else if let Some(vector_type) = type_tag.get("Vector") {
-                            vector_type.as_str().map(|inner_type| format!("Vector<{}>", inner_type))
+                            vector_type.as_str().map(|inner_type| format!("Vector<{inner_type}>"))
                         } else {
                             Some(format!("{type_tag:?}"))
                         }
